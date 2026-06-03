@@ -1,0 +1,39 @@
+# Reference clones (studied, never vendored)
+_reference/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Project runtime artifacts
+.cache/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/infoleg.sqlite
+data/*.zip
+data/*.csv
+
+# Secrets / local config
+.env
+secrets/
+*-keys.json
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

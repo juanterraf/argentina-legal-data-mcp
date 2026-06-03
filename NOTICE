@@ -1,0 +1,39 @@
+Argentina Legal & Data MCP
+Copyright (c) 2026 the Argentina Legal & Data MCP authors.
+
+This product is an independent, clean-room reimplementation. It was informed by
+studying the *behaviour and patterns* of the reference projects listed below; no
+source code was copied verbatim from any of them.
+
+================================================================================
+Reference projects studied (behaviour/patterns only)
+================================================================================
+
+* martindieser/InfoLegMCP  — https://github.com/martindieser/InfoLegMCP
+  No explicit license (all rights reserved). We did NOT copy code. We reused only
+  non-copyrightable facts about how the public InfoLEG service behaves (HTTP
+  endpoints, form field names, the modo=1|2 semantics of verVinculos, the 5,000-row
+  annex folder convention, and the official dataset column names).
+
+* abenassi/argentina-data-mcp — https://github.com/abenassi/argentina-data-mcp
+  PolyForm Noncommercial License. We did NOT copy code and do not reuse it in a
+  commercial context. We reimplemented engineering patterns (dual auth, hot-reload
+  API keys, recency-boosted ranking, data-freshness/health, scheduled collectors).
+
+* voftec/InfoLeg-MCP — https://github.com/voftec/InfoLeg-MCP
+  MIT License. Adapted ideas with attribution (original-vs-updated diff, boletín
+  helpers, MCP prompts). NOTE: we deliberately do NOT reproduce its incorrect
+  50,000-block annex-folder computation, nor its disabling of TLS verification.
+
+================================================================================
+Data sources
+================================================================================
+
+* InfoLEG — Información Legislativa y Documental, Ministerio de Justicia de la
+  Nación (Argentina). https://www.infoleg.gob.ar
+* "Base InfoLeg - Normativa Nacional" dataset, datos.jus.gob.ar / datos.gob.ar.
+  Licensed CC BY 2.5 AR. Attribution required.
+
+Legal information surfaced by this server comes from official sources but does not
+constitute legal advice. Verify against the official portal before any evidentiary
+or binding use.
