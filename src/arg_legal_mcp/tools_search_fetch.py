@@ -11,6 +11,8 @@ makes FastMCP emit both structuredContent and a JSON text block, as OpenAI expec
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from .infoleg.services import InfoLegService
 
 try:
@@ -21,11 +23,30 @@ except Exception:  # pragma: no cover
     _RO = None
 
 
+# Typed returns so FastMCP emits `structuredContent` (OpenAI deep-research expects it).
+class SearchHit(TypedDict):
+    id: str
+    title: str
+    url: str
+
+
+class SearchResults(TypedDict):
+    results: list[SearchHit]
+
+
+class FetchResult(TypedDict):
+    id: str
+    title: str
+    text: str
+    url: str
+    metadata: dict
+
+
 def _norma_url(service: InfoLegService, norma_id: int) -> str:
     return f"{service.s.infoleg_base_url.rstrip('/')}/verNorma.do?id={norma_id}"
 
 
-def do_search(service: InfoLegService, query: str, limit: int = 10) -> dict:
+def do_search(service: InfoLegService, query: str, limit: int = 10) -> SearchResults:
     base_results: list[dict] = []
     if service.dataset.available():
         rows, _total = service.dataset.search(texto=query, limit=limit)
@@ -47,17 +68,17 @@ def do_search(service: InfoLegService, query: str, limit: int = 10) -> dict:
     return {"results": base_results}
 
 
-def do_fetch(service: InfoLegService, doc_id: str) -> dict:
+def do_fetch(service: InfoLegService, doc_id: str) -> FetchResult:
     try:
         nid = int(str(doc_id).strip())
     except (ValueError, TypeError):
         return {"id": str(doc_id), "title": "id invalido",
-                "text": "El id debe ser numerico (id_norma de InfoLEG).", "url": ""}
+                "text": "El id debe ser numerico (id_norma de InfoLEG).", "url": "", "metadata": {}}
     url = _norma_url(service, nid)
     row = service.dataset.get_norma(nid)
     if not row:
         return {"id": str(nid), "title": f"Norma {nid} no encontrada en el dataset",
-                "text": "", "url": url}
+                "text": "", "url": url, "metadata": {}}
     tipo = (row.get("tipo_norma") or "").strip()
     numero = (row.get("numero_norma") or "").strip()
     title = f"{tipo} {numero}".strip() or f"Norma {nid}"
@@ -83,7 +104,7 @@ def register_search_fetch(mcp, service: InfoLegService) -> None:
     ro = {"annotations": _RO} if _RO else {}
 
     @mcp.tool(name="search", **ro)
-    def search(query: str) -> dict:
+    def search(query: str) -> SearchResults:
         """Search Argentine national legislation (InfoLEG) by keywords.
 
         Returns {"results": [{"id", "title", "url"}]}. Pass an `id` to `fetch` to get the
@@ -92,7 +113,7 @@ def register_search_fetch(mcp, service: InfoLegService) -> None:
         return do_search(service, query)
 
     @mcp.tool(name="fetch", **ro)
-    def fetch(id: str) -> dict:
+    def fetch(id: str) -> FetchResult:
         """Fetch a legislation document by its id (id_norma from `search`).
 
         Returns {"id", "title", "text", "url", "metadata"} with a citable official URL.
