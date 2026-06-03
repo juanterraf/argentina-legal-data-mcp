@@ -56,6 +56,22 @@ def test_parse_date():
     assert _parse_date("garbage") is None
 
 
+def test_transport_security_settings():
+    from arg_legal_mcp.server import _transport_security
+
+    # stdio: no HTTP validation
+    assert _transport_security(Settings(transport="stdio")) is None
+    # reverse-proxied (no allowlist) -> protection disabled so forwarded Host is accepted
+    ts = _transport_security(Settings(transport="streamable-http"))
+    assert ts.enable_dns_rebinding_protection is False
+    # explicit allowlist -> protection ON, includes our host + localhost wildcards
+    ts2 = _transport_security(Settings(transport="streamable-http",
+                                       allowed_hosts="mcp.derechointeligente.com.ar"))
+    assert ts2.enable_dns_rebinding_protection is True
+    assert "mcp.derechointeligente.com.ar" in ts2.allowed_hosts
+    assert "127.0.0.1:*" in ts2.allowed_hosts
+
+
 def test_sanitize_dsn():
     assert _sanitize_dsn("postgresql://user:secret@host:5432/db") == \
         "postgresql://user:***@host:5432/db"

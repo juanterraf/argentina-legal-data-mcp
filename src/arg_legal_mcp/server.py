@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import Settings, get_settings
 from .health import HealthStore
@@ -48,6 +49,27 @@ class ServiceContainer:
         self.session_manager.close()
         if self.cache:
             self.cache.close()
+
+
+def _transport_security(settings: Settings) -> TransportSecuritySettings | None:
+    """DNS-rebinding protection for HTTP transports.
+
+    FastMCP auto-enables protection (localhost-only hosts) whenever the bind host is
+    127.0.0.1, which breaks any reverse-proxied deploy (the proxy forwards the public
+    Host). So we set it explicitly: if ``allowed_hosts`` is configured, keep protection ON
+    limited to those hosts; otherwise disable it (the localhost bind + nginx server_name
+    already constrain access). For stdio, return None (HTTP validation doesn't apply).
+    """
+    if settings.transport == "stdio":
+        return None
+    hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+    if hosts:
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=hosts + ["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=[o.strip() for o in settings.allowed_origins.split(",") if o.strip()],
+        )
+    return TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
 def build_service(settings: Settings | None = None, *, use_cache: bool = True) -> ServiceContainer:
@@ -100,6 +122,7 @@ def build_server(settings: Settings | None = None) -> tuple[FastMCP, ServiceCont
         instructions=INSTRUCTIONS,
         host=settings.host,
         port=settings.port,
+        transport_security=_transport_security(settings),
     )
     register_infoleg(mcp, container.infoleg, container.catalogs, health=container.health)
     register_common(mcp, health=container.health, dataset=container.dataset)

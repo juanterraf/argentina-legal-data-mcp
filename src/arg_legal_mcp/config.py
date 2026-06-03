@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     transport: str = "stdio"  # stdio | streamable-http | sse
     host: str = "127.0.0.1"
     port: int = 8000
+    # DNS-rebinding protection (HTTP transports). If allowed_hosts is set, protection is
+    # ON and limited to those hosts (+ localhost). If left empty, protection is DISABLED —
+    # correct for a reverse-proxied deploy (app bound to localhost; nginx validates the
+    # server_name + terminates TLS). Comma-separated.
+    allowed_hosts: str = ""
+    allowed_origins: str = ""
 
     # ── Storage / cache ──────────────────────────────────────────────────────
     data_dir: Path = Path("./data")
