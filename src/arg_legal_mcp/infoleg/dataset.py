@@ -148,20 +148,28 @@ class DatasetStore:
             return row[0] if row else None
 
     def get_norma(self, id_norma: int) -> dict | None:
-        with closing(connect(self.db_path)) as conn:
-            row = conn.execute("SELECT * FROM normas WHERE id_norma=?", (id_norma,)).fetchone()
-            return dict(row) if row else None
+        try:
+            with closing(connect(self.db_path)) as conn:
+                row = conn.execute(
+                    "SELECT * FROM normas WHERE id_norma=?", (id_norma,)
+                ).fetchone()
+                return dict(row) if row else None
+        except sqlite3.OperationalError:  # table not built yet
+            return None
 
     def resolve_id(self, tipo_nombre: str, numero: int | str) -> int | None:
         """Resolve e.g. ("Ley", 27275) -> id_norma. Returns the most recent match."""
-        with closing(connect(self.db_path)) as conn:
-            row = conn.execute(
-                "SELECT id_norma FROM normas "
-                "WHERE lower(tipo_norma)=lower(?) AND numero_norma=? "
-                "ORDER BY fecha_boletin DESC LIMIT 1",
-                (str(tipo_nombre), str(numero)),
-            ).fetchone()
-            return int(row[0]) if row else None
+        try:
+            with closing(connect(self.db_path)) as conn:
+                row = conn.execute(
+                    "SELECT id_norma FROM normas "
+                    "WHERE lower(tipo_norma)=lower(?) AND numero_norma=? "
+                    "ORDER BY fecha_boletin DESC LIMIT 1",
+                    (str(tipo_nombre), str(numero)),
+                ).fetchone()
+                return int(row[0]) if row else None
+        except sqlite3.OperationalError:
+            return None
 
     def search(
         self,
@@ -316,13 +324,15 @@ def import_csv(conn: sqlite3.Connection, csv_path: str | Path, batch_size: int =
 
     # (Re)build the FTS index from the content table.
     conn.execute("INSERT INTO normas_fts(normas_fts) VALUES('rebuild')")
+    # Distinct count (the CSV can repeat id_norma; INSERT OR REPLACE dedupes by PK).
+    distinct = conn.execute("SELECT COUNT(*) FROM normas").fetchone()[0]
     built_at = datetime.now(UTC).isoformat(timespec="seconds")
     conn.executemany(
         "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
-        [("row_count", str(imported)), ("built_at", built_at)],
+        [("row_count", str(distinct)), ("rows_read", str(imported)), ("built_at", built_at)],
     )
     conn.commit()
-    return imported
+    return distinct
 
 
 def build_dataset_from_csv(csv_path: str | Path, db_path: str | Path) -> int:

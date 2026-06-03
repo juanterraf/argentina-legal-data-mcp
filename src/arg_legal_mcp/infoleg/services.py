@@ -12,7 +12,7 @@ import math
 
 import httpx
 
-from .anexos import computed_anexo_url, resolve_anexo_url
+from .anexos import resolve_anexo_url
 from .cache import InfoLegCache
 from .catalogs import CatalogService
 from .client import InfoLegClient
@@ -254,79 +254,96 @@ class InfoLegService:
                              "no esta en el dataset offline.", "id": id_norma}
 
     # ── texto ────────────────────────────────────────────────────────────────
-    def _full_text_live(self, id_norma: int, tipo: TipoTexto) -> str | None:
-        if self.cache:
-            cached = self.cache.get_texto(id_norma, tipo.value)
-            if cached is not None:
-                return cached
-        ficha = self._ficha_dict(id_norma)
-        if not ficha:
-            return None
-        key = "url_texto_actualizado" if tipo == TipoTexto.ACTUALIZADO else "url_texto_completo"
-        rel = ficha.get(key)
-        if not rel:
-            return None
-        abs_url = resolve_anexo_url(self.s.infoleg_base_url, rel)
-        texto = self.client.consultar_anexo(self.sm.get_client(), abs_url)
-        if self.cache and texto:
-            self.cache.set_texto(id_norma, tipo.value, texto)
-        return texto
-
-    def _full_text_dataset(self, id_norma: int, tipo: TipoTexto) -> str | None:
+    def _dataset_text_or_url(self, id_norma: int, tipo: TipoTexto) -> tuple[str | None, str | None]:
+        """Read the dataset's text column. Returns (texto, url): the official dataset
+        stores the **anexo URL** there for most norms (and occasionally embedded HTML/text).
+        """
         row = self.dataset.get_norma(id_norma)
         if not row:
-            return None
+            return None, None
         col = "texto_actualizado" if tipo == TipoTexto.ACTUALIZADO else "texto_original"
-        raw = row.get(col)
+        raw = (row.get(col) or "").strip()
         if not raw:
-            return None
-        if "<" in raw and ">" in raw:  # looks like HTML
+            return None, None
+        if raw.lower().startswith(("http://", "https://")) and " " not in raw and "<" not in raw:
+            return None, raw  # it's a URL pointer, not the body
+        if "<" in raw and ">" in raw:  # embedded HTML
             from bs4 import BeautifulSoup
             from markdownify import markdownify as md
             soup = BeautifulSoup(raw, "lxml")
             for tag in soup(["script", "style"]):
                 tag.decompose()
-            return md(str(soup), heading_style="ATX").strip()
-        return raw.strip()
+            return md(str(soup), heading_style="ATX").strip(), None
+        return raw, None
+
+    def _resolve_text(self, id_norma: int, tipo: TipoTexto) -> tuple[str | None, str | None, str | None]:
+        """Resolve a norma's text.
+
+        Returns ``(texto, fuente, url_oficial)``. ``texto`` is None when the body can't
+        be downloaded right now (in which case ``url_oficial`` points at the real anexo).
+        Order: cache -> dataset (embedded text or anexo URL) -> live ficha URL -> fetch anexo.
+        Raises ``NormaNotFoundError`` if the live ficha says the norma does not exist.
+        """
+        if self.cache:
+            cached = self.cache.get_texto(id_norma, tipo.value)
+            if cached is not None:
+                return cached, "cache", None
+
+        texto_ds, url = self._dataset_text_or_url(id_norma, tipo)
+        if texto_ds is not None:
+            return texto_ds, "dataset", None
+
+        if url is None:  # ask the live ficha for the anexo URL (when the search app is up)
+            try:
+                ficha = self._ficha_dict(id_norma)
+                key = ("url_texto_actualizado" if tipo == TipoTexto.ACTUALIZADO
+                       else "url_texto_completo")
+                url = (ficha or {}).get(key)
+            except _LIVE_ERRORS:
+                url = None
+
+        if url:
+            abs_url = resolve_anexo_url(self.s.infoleg_base_url, url)
+            try:
+                texto = self.client.consultar_anexo(self.sm.get_client(), abs_url)
+                if self.cache and texto:
+                    self.cache.set_texto(id_norma, tipo.value, texto)
+                return texto, "anexo", abs_url
+            except _LIVE_ERRORS:
+                return None, None, abs_url  # have the official URL, can't download now
+        return None, None, None
 
     def obtener_texto(
         self, id_norma: int, tipo: TipoTexto, inicio: int = 0, fin: int | None = None
     ) -> dict:
-        fuente = None
-        aviso = None
-        tipo_efectivo = tipo
-        texto: str | None = None
-
         try:
-            texto = self._full_text_live(id_norma, tipo)
-            if texto is not None:
-                fuente = "vivo"
+            texto, fuente, url = self._resolve_text(id_norma, tipo)
         except NormaNotFoundError:
             return {"error": f"No existe una norma con id {id_norma}.", "id": id_norma}
-        except _LIVE_ERRORS as exc:
-            aviso = f"Texto en vivo no disponible ({exc}); se intenta el dataset offline."
 
-        if texto is None:
-            texto = self._full_text_dataset(id_norma, tipo)
-            if texto is not None:
-                fuente = "dataset" if fuente is None else fuente
-
-        # If asked for actualizado but only original exists, degrade with notice.
+        tipo_efectivo = tipo
+        aviso = None
+        # Asked for actualizado but it's unavailable -> fall back to original.
         if texto is None and tipo == TipoTexto.ACTUALIZADO:
-            texto = self._full_text_dataset(id_norma, TipoTexto.ORIGINAL)
-            if texto is not None:
-                tipo_efectivo = TipoTexto.ORIGINAL
-                fuente = "dataset"
-                aviso = "No hay texto actualizado; se devuelve el texto ORIGINAL del dataset."
+            try:
+                t2, f2, u2 = self._resolve_text(id_norma, TipoTexto.ORIGINAL)
+            except NormaNotFoundError:
+                t2 = f2 = u2 = None
+            if t2 is not None:
+                texto, fuente, tipo_efectivo = t2, f2, TipoTexto.ORIGINAL
+                aviso = "No hay texto actualizado disponible; se devuelve el ORIGINAL."
+            elif u2 and not url:
+                url = u2
 
         if texto is None:
-            unverified = computed_anexo_url(self.s.infoleg_base_url, id_norma, tipo)
             return {
                 "id": id_norma,
-                "error": f"No se pudo obtener el texto {tipo.value} de la norma {id_norma}.",
-                "url_calculada_no_verificada": unverified,
-                "aviso": "URL calculada con bloques de 5000 (NO verificada). "
-                         "Preferi la URL real de la ficha; esta puede no existir.",
+                "tipo_texto": tipo.value,
+                "error": f"No se pudo descargar el texto {tipo.value} de la norma {id_norma} ahora.",
+                "url_oficial": url,
+                "aviso": "El dataset/ficha aporta la URL oficial del anexo, pero la descarga "
+                         "no esta disponible en este momento (servicio InfoLEG caido). "
+                         "Abri la URL o reintenta mas tarde.",
             }
 
         chunk = self._chunk(texto, inicio, fin)
@@ -334,6 +351,7 @@ class InfoLegService:
             "id": id_norma,
             "tipo_texto": tipo_efectivo.value,
             "fuente": fuente,
+            "url_oficial": url,
             "aviso": aviso,
             **chunk,
         }
@@ -433,12 +451,10 @@ class InfoLegService:
 
     def _get_any_text(self, id_norma: int, tipo: TipoTexto) -> str | None:
         try:
-            t = self._full_text_live(id_norma, tipo)
-            if t is not None:
-                return t
-        except (NormaNotFoundError, *_LIVE_ERRORS):
-            pass
-        return self._full_text_dataset(id_norma, tipo)
+            texto, _fuente, _url = self._resolve_text(id_norma, tipo)
+            return texto
+        except NormaNotFoundError:
+            return None
 
 
 def _d(iso_date: str | None, part: int) -> int | None:
