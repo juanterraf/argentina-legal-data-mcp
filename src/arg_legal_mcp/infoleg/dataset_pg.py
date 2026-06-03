@@ -308,21 +308,13 @@ def download_and_build_pg(
     import tempfile
     import zipfile
 
-    import httpx
-
-    from .dataset import ZIP_URL
+    from .dataset import ZIP_URL, _download_zip
 
     zip_url = zip_url or ZIP_URL
     tmp = Path(tmp_dir or tempfile.gettempdir())
     tmp.mkdir(parents=True, exist_ok=True)
     zip_path = tmp / "infoleg-dump.zip"
-    print(f"Downloading {zip_url} ...", file=sys.stderr)
-    with httpx.Client(timeout=600, headers={"User-Agent": user_agent}, follow_redirects=True) as c:
-        with c.stream("GET", zip_url) as resp:
-            resp.raise_for_status()
-            with open(zip_path, "wb") as fh:
-                for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                    fh.write(chunk)
+    _download_zip(zip_url, zip_path, user_agent=user_agent)
     extract_dir = tmp / "infoleg-dump"
     extract_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as zf:

@@ -331,6 +331,35 @@ def build_dataset_from_csv(csv_path: str | Path, db_path: str | Path) -> int:
         return import_csv(conn, csv_path)
 
 
+def _download_zip(zip_url: str, zip_path: Path, *, user_agent: str) -> None:
+    """Stream a (large) ZIP to disk, printing progress so it never looks frozen.
+
+    Uses per-operation timeouts (not a single total cap) so a multi-hundred-MB
+    download can take as long as it needs, as long as bytes keep arriving.
+    """
+    import httpx
+
+    timeout = httpx.Timeout(connect=30.0, read=120.0, write=120.0, pool=30.0)
+    print(f"Downloading {zip_url} ...", file=sys.stderr, flush=True)
+    with httpx.Client(timeout=timeout, headers={"User-Agent": user_agent},
+                      follow_redirects=True) as client:
+        with client.stream("GET", zip_url) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length") or 0)
+            if total:
+                print(f"  total: {total / 1e6:.0f} MB", file=sys.stderr, flush=True)
+            done = last = 0
+            with open(zip_path, "wb") as fh:
+                for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                    fh.write(chunk)
+                    done += len(chunk)
+                    if done - last >= 20 * (1 << 20):  # progress every ~20 MB
+                        last = done
+                        pct = f" ({100 * done / total:.0f}%)" if total else ""
+                        print(f"  ... {done / 1e6:.0f} MB{pct}", file=sys.stderr, flush=True)
+    print(f"Downloaded {zip_path.stat().st_size / 1e6:.1f} MB", file=sys.stderr, flush=True)
+
+
 def download_and_build(
     db_path: str | Path,
     *,
@@ -342,21 +371,11 @@ def download_and_build(
     import tempfile
     import zipfile
 
-    import httpx
-
     tmp = Path(tmp_dir or tempfile.gettempdir())
     tmp.mkdir(parents=True, exist_ok=True)
     zip_path = tmp / "infoleg-dump.zip"
 
-    print(f"Downloading {zip_url} ...", file=sys.stderr)
-    with httpx.Client(timeout=600, headers={"User-Agent": user_agent},
-                      follow_redirects=True) as client:
-        with client.stream("GET", zip_url) as resp:
-            resp.raise_for_status()
-            with open(zip_path, "wb") as fh:
-                for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                    fh.write(chunk)
-    print(f"Downloaded {zip_path.stat().st_size / 1e6:.1f} MB", file=sys.stderr)
+    _download_zip(zip_url, zip_path, user_agent=user_agent)
 
     extract_dir = tmp / "infoleg-dump"
     extract_dir.mkdir(parents=True, exist_ok=True)
