@@ -26,11 +26,24 @@
 - **Phase 2** — ✅ dual transport (stdio + streamable-http/sse), auth (hot-reload API
   keys + ASGI middleware), health/freshness + request log, Docker/compose/systemd/Caddy,
   README.
-- **Phase 3** — 🟡 extensible **sources** framework + two live sources implemented and
-  tested (**dólar**, **feriados**). Pending: BCRA, INDEC, AFIP, legislación tributaria,
-  Boletín Oficial collectors, and the optional **PostgreSQL** backend adapter.
+- **Phase 3** — ✅ extensible **sources** framework + 8 extra-source tools, all with the
+  API contracts **live-verified** (a research workflow fetched real samples) and covered
+  by mocked tests:
+  - **dólar** (DolarAPI), **BCRA** variables + cotizaciones (v4.0 — v2/v3 are 410 Gone),
+    **INDEC**/datos.gob.ar series + search, **feriados** (ArgentinaDatos),
+    **tributaria** (filtered InfoLEG dataset), **Boletín Oficial** (CABA JSON; national
+    has no stable JSON API — honest pointers), **AFIP** padrón (best-effort + local CUIT
+    validation; no free official API exists).
+  - Optional **PostgreSQL** backend (`ARGMCP_BACKEND=postgres`): tsvector +
+    `websearch_to_tsquery` + pg_trgm + recency boost, same interface as SQLite, with an
+    importer and a guarded integration test.
 - **Phase 4** — ✅ diff tool, MCP prompts, `EVALS.md`, bounded retry/backoff, structured
-  errors. Pending: a broader live eval run (blocked by InfoLEG availability).
+  errors, and a multi-agent **adversarial review** of the new sources/Postgres code that
+  surfaced 9 confirmed issues — all fixed and covered by tests (notably: BCRA catalog
+  pagination so all 1220 variables are returned rather than silently truncated at 1000;
+  no-retry on permanent 4xx; Postgres↔SQLite search-operator parity; tighter error
+  handling). Pending: a broader live eval run for InfoLEG specifically (blocked by InfoLEG
+  availability; the other sources are verified live).
 
 ## Known limitations / TODO
 
@@ -44,8 +57,12 @@
   working client; verify against the live form when reachable.
 - Complementary vínculos datasets (`0c4fdafe…`, `dea3c247…`) are not yet loaded; vínculos
   use live `verVinculos` with the main dataset's `modifica_a`/`modificada_por` as fallback.
-- PostgreSQL backend is scaffolded in config only (`ARGMCP_BACKEND=postgres`); the
-  adapter itself is a TODO (SQLite is the supported default).
+- PostgreSQL backend is implemented (`ARGMCP_BACKEND=postgres` + `ARGMCP_PG_DSN`); its
+  integration test is skipped unless a live `ARGMCP_PG_DSN` is provided (SQLite remains
+  the zero-config default).
+- AFIP has **no** free official API; `afip_padron` is best-effort against an unofficial,
+  frequently-down endpoint. CUIT validation is local and reliable. National Boletín
+  Oficial has no stable public JSON API (WAF); the CABA bulletin does.
 
 ## How to extend with a new source (Phase 3 pattern)
 

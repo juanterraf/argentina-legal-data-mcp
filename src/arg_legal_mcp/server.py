@@ -12,10 +12,10 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Settings, get_settings
 from .health import HealthStore
+from .infoleg.backend import DatasetBackend, get_dataset
 from .infoleg.cache import InfoLegCache
 from .infoleg.catalogs import CatalogService
 from .infoleg.client import InfoLegClient
-from .infoleg.dataset import DatasetStore
 from .infoleg.services import InfoLegService
 from .infoleg.session import SessionManager
 from .prompts import register_prompts
@@ -37,7 +37,7 @@ INSTRUCTIONS = (
 class ServiceContainer:
     settings: Settings
     catalogs: CatalogService
-    dataset: DatasetStore
+    dataset: DatasetBackend
     cache: InfoLegCache | None
     session_manager: SessionManager
     infoleg: InfoLegService
@@ -57,7 +57,7 @@ def build_service(settings: Settings | None = None, *, use_cache: bool = True) -
         dependencias_path=settings.data_dir / "dependencias.json",
         tipos_path=settings.data_dir / "tipos_norma.json",
     )
-    dataset = DatasetStore(settings.dataset_path)
+    dataset = get_dataset(settings)
     health = HealthStore(settings.data_dir / "health.sqlite")
     if dataset.available():
         health.record_freshness(
@@ -102,6 +102,6 @@ def build_server(settings: Settings | None = None) -> tuple[FastMCP, ServiceCont
     )
     register_infoleg(mcp, container.infoleg, container.catalogs, health=container.health)
     register_common(mcp, health=container.health, dataset=container.dataset)
-    register_sources(mcp, settings)
+    register_sources(mcp, settings, dataset=container.dataset)
     register_prompts(mcp)
     return mcp, container

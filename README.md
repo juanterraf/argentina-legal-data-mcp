@@ -66,6 +66,25 @@ python -m arg_legal_mcp
 Resource: `infoleg://tipos-norma` (catalog of norm types).
 Prompts: `buscar_ley_decreto`, `auditar_norma`, `comparar_versiones`.
 
+## Other public-data tools
+
+All endpoints below were **live-verified**; each tool returns a structured dict with a
+`fuente` and degrades to a clear `error`/`nota` rather than crashing.
+
+| Tool | Source | Notes |
+|------|--------|-------|
+| `dolar_cotizaciones` | DolarAPI | Oficial, blue, MEP, CCL, tarjeta… |
+| `bcra_variables` | BCRA Estadísticas Monetarias **v4.0** | Catalog (no id) or a variable's time series. v2/v3 are 410 Gone. |
+| `bcra_cotizaciones` | BCRA Estadísticas Cambiarias v1.0 | FX table (snapshot) or per-currency history. |
+| `indec_serie` / `indec_buscar_series` | datos.gob.ar Series de Tiempo | IPC, EMAE, FX… search ids then fetch. |
+| `feriados_nacionales` | ArgentinaDatos | National holidays for a year. |
+| `tributaria_buscar` | InfoLEG dataset (filtered) | Tax-matter norms (heuristic, non-binding). |
+| `boletin_oficial_buscar` | Boletín Oficial | CABA has a clean JSON API; **national has no stable JSON API** (WAF) — returns official pointers. |
+| `afip_padron` | AFIP (unofficial) | **Best effort.** No free official API exists; CUIT validation is local & reliable, lookup may be unavailable. |
+
+Backend: SQLite + FTS5 by default; set `ARGMCP_BACKEND=postgres` + `ARGMCP_PG_DSN` for a
+PostgreSQL store (tsvector + pg_trgm) via the same interface.
+
 ## Remote deployment (HTTP)
 
 The server speaks two transports, chosen by `ARGMCP_TRANSPORT`:
@@ -129,7 +148,7 @@ All settings use the `ARGMCP_` env prefix — see [.env.example](.env.example).
 ```bash
 pip install -e ".[dev]"
 ruff check src tests
-pytest -q          # 34 tests; no network required (HTTP mocked with respx)
+pytest -q          # 43 tests; no network required (HTTP mocked with respx)
 ```
 
 > Note: during development the public InfoLEG site (`servicios.infoleg.gob.ar`) was

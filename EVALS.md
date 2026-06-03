@@ -19,6 +19,9 @@ Ten questions whose answers are checkable against official sources. Use them to 
 | 8 | What is the numeric id of the organism **"ANSES"**? | `infoleg_buscar_dependencias("ANSES")` | Fuzzy match returns the organism + id (needs `update-configs`). |
 | 9 | What is the current **blue** dollar rate? | `dolar_cotizaciones()` | `casa="blue"` compra/venta, live from DolarAPI. |
 | 10 | List the **national holidays of 2026**. | `feriados_nacionales(2026)` | ~19 holidays incl. 01-01 "Año nuevo" (ArgentinaDatos). |
+| 11 | What are the BCRA's current **international reserves**? | `bcra_variables()` then `bcra_variables(id_variable=1)` | Catalog lists ~1220 variables; id 1 = "Reservas internacionales" (USD millions). |
+| 12 | Find the INDEC **IPC** national series id. | `indec_buscar_series("ipc nivel general nacional")` then `indec_serie(<id>, sort="desc", limit=1)` | Search returns ids; serie returns `[date, value]` observations. |
+| 13 | What sections did the **CABA** bulletin publish on a date? | `boletin_oficial_buscar(fecha="2026-06-02", jurisdiccion="caba")` | Real JSON sections. (`jurisdiccion="nacional"` returns honest pointers — no stable national JSON API.) |
 
 ## Robustness checks (no network)
 - `pytest -q` → 37 tests green, including:

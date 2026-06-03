@@ -35,6 +35,9 @@ def get_json(
                 raise SourceError(f"server error {resp.status_code} from {url}")
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as exc:
+            # 4xx is a permanent client error (404/410/...) — do not retry.
+            raise SourceError(f"HTTP {exc.response.status_code} from {url}") from exc
         except (httpx.HTTPError, ValueError, SourceError) as exc:
             last = exc
             if attempt == retries - 1:

@@ -35,10 +35,19 @@ def _serve(transport: str | None) -> None:
 
 
 def _build_dataset() -> int:
-    from .infoleg.dataset import download_and_build
-
     settings = get_settings()
     settings.ensure_dirs()
+    if settings.backend == "postgres":
+        if not settings.pg_dsn:
+            print("ERROR: ARGMCP_BACKEND=postgres requires ARGMCP_PG_DSN", file=sys.stderr)
+            return 2
+        from .infoleg.dataset_pg import download_and_build_pg
+
+        count = download_and_build_pg(settings.pg_dsn, user_agent=settings.user_agent)
+        print(f"OK: {count} normas -> postgres")
+        return 0
+    from .infoleg.dataset import download_and_build
+
     count = download_and_build(settings.dataset_path, user_agent=settings.user_agent)
     print(f"OK: {count} normas -> {settings.dataset_path}")
     return 0
