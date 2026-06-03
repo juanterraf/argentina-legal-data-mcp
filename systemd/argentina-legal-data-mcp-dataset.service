@@ -1,0 +1,15 @@
+[Unit]
+Description=Rebuild the InfoLEG offline dataset from the official ZIP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=argmcp
+Group=argmcp
+WorkingDirectory=/opt/argentina-legal-data-mcp
+Environment=ARGMCP_DATA_DIR=/opt/argentina-legal-data-mcp/data
+Environment=ARGMCP_DATASET_PATH=/var/lib/argentina-legal-data-mcp/infoleg.sqlite
+ExecStart=/opt/argentina-legal-data-mcp/.venv/bin/python -m arg_legal_mcp build-dataset
+TimeoutStartSec=3600
+ReadWritePaths=/var/lib/argentina-legal-data-mcp

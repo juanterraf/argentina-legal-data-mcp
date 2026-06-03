@@ -18,6 +18,7 @@ import sqlite3
 import sys
 from collections.abc import Iterable
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Official dataset column order (datos.jus.gob.ar "Base InfoLeg - Normativa Nacional").
@@ -315,8 +316,10 @@ def import_csv(conn: sqlite3.Connection, csv_path: str | Path, batch_size: int =
 
     # (Re)build the FTS index from the content table.
     conn.execute("INSERT INTO normas_fts(normas_fts) VALUES('rebuild')")
-    conn.execute(
-        "INSERT OR REPLACE INTO meta(key, value) VALUES('row_count', ?)", (str(imported),)
+    built_at = datetime.now(UTC).isoformat(timespec="seconds")
+    conn.executemany(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)",
+        [("row_count", str(imported)), ("built_at", built_at)],
     )
     conn.commit()
     return imported

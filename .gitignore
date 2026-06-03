@@ -22,7 +22,8 @@ data/*.csv
 
 # Secrets / local config
 .env
-secrets/
+secrets/*
+!secrets/api-keys.json.example
 *-keys.json
 
 # Tooling

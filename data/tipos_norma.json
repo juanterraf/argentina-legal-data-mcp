@@ -1,0 +1,7 @@
+[
+  { "id": 1, "nombre": "Ley" },
+  { "id": 2, "nombre": "Decreto" },
+  { "id": 3, "nombre": "Resolución" },
+  { "id": 4, "nombre": "Disposición" },
+  { "id": 8, "nombre": "Decisión Administrativa" }
+]

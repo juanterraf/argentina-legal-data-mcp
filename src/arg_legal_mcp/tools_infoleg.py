@@ -26,7 +26,7 @@ def _err(value_error: Exception) -> dict:
     return {"error": str(value_error)}
 
 
-def register_infoleg(mcp, service: InfoLegService, catalogs) -> None:
+def register_infoleg(mcp, service: InfoLegService, catalogs, *, health=None) -> None:
     ro = {"annotations": _RO} if _RO else {}
     write = {"annotations": _WRITE} if _WRITE else {}
 
@@ -215,5 +215,15 @@ def register_infoleg(mcp, service: InfoLegService, catalogs) -> None:
                              "y reconstruir el dataset desde datos.jus.gob.ar."}
         from .infoleg.dataset import download_and_build
 
-        count = download_and_build(service.dataset.db_path, user_agent=service.s.user_agent)
+        try:
+            count = download_and_build(service.dataset.db_path, user_agent=service.s.user_agent)
+        except Exception as exc:  # noqa: BLE001
+            if health is not None:
+                health.record_freshness("infoleg_dataset", healthy=False, error=str(exc))
+            return {"ok": False, "error": f"No se pudo construir el dataset: {exc}"}
+        if health is not None:
+            health.record_freshness(
+                "infoleg_dataset", healthy=True,
+                last_data_date=service.dataset.get_meta("built_at"),
+            )
         return {"ok": True, "cantidad_normas": count, "ruta": service.dataset.db_path}

@@ -1,0 +1,46 @@
+# Argentina Legal & Data MCP — local/remote deployment.
+#
+# IMPORTANT: run a SINGLE instance — live InfoLEG pagination keeps in-process session
+# state. Scale by fronting with the dataset, not by adding replicas.
+#
+# First-time setup:
+#   1. cp secrets/api-keys.json.example secrets/api-keys.json  (and edit)
+#   2. docker compose run --rm mcp python -m arg_legal_mcp build-dataset   # heavy, one-time
+#   3. docker compose up -d
+services:
+  mcp:
+    build: .
+    image: argentina-legal-data-mcp:latest
+    restart: unless-stopped
+    environment:
+      ARGMCP_TRANSPORT: streamable-http
+      ARGMCP_AUTH_ENABLED: "true"
+    volumes:
+      - dataset:/data
+      - cache:/cache
+      - ./secrets:/secrets:ro
+    expose:
+      - "8000"
+    # Bind to localhost only; Caddy terminates TLS and proxies in.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # Optional: HTTPS reverse proxy. Set your domain/email in Caddyfile + env.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - mcp
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  dataset:
+  cache:
+  caddy_data:
+  caddy_config:

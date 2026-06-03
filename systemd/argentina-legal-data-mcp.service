@@ -1,0 +1,31 @@
+[Unit]
+Description=Argentina Legal & Data MCP (streamable-http)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/paths to your install. Use a dedicated unprivileged user.
+User=argmcp
+Group=argmcp
+WorkingDirectory=/opt/argentina-legal-data-mcp
+Environment=ARGMCP_TRANSPORT=streamable-http
+Environment=ARGMCP_HOST=127.0.0.1
+Environment=ARGMCP_PORT=8000
+Environment=ARGMCP_AUTH_ENABLED=true
+Environment=ARGMCP_API_KEYS_PATH=/opt/argentina-legal-data-mcp/secrets/api-keys.json
+Environment=ARGMCP_DATA_DIR=/opt/argentina-legal-data-mcp/data
+Environment=ARGMCP_CACHE_DIR=/var/lib/argentina-legal-data-mcp/cache
+Environment=ARGMCP_DATASET_PATH=/var/lib/argentina-legal-data-mcp/infoleg.sqlite
+ExecStart=/opt/argentina-legal-data-mcp/.venv/bin/python -m arg_legal_mcp serve --transport streamable-http
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/argentina-legal-data-mcp
+
+[Install]
+WantedBy=multi-user.target

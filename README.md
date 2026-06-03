@@ -66,6 +66,60 @@ python -m arg_legal_mcp
 Resource: `infoleg://tipos-norma` (catalog of norm types).
 Prompts: `buscar_ley_decreto`, `auditar_norma`, `comparar_versiones`.
 
+## Remote deployment (HTTP)
+
+The server speaks two transports, chosen by `ARGMCP_TRANSPORT`:
+`stdio` (local) and `streamable-http` / `sse` (remote).
+
+### Auth model
+
+- **Discovery is open** (`initialize`, `*_/list`, `ping`, `notifications/*`) so a client
+  can connect and enumerate capabilities.
+- **Execution is protected** (`tools/call`, `resources/read`, `prompts/get`) when
+  `ARGMCP_AUTH_ENABLED=true` — requires a `Authorization: Bearer <key>` header.
+- API keys live in a JSON file (`ARGMCP_API_KEYS_PATH`) that is **hot-reloaded** (~60s,
+  by mtime) with `dev`/`user` roles. See [secrets/api-keys.json.example](secrets/api-keys.json.example).
+- **stdio needs no auth** (it's a local pipe). TLS verification on outbound requests is
+  always on.
+
+> ⚠️ Run a **single instance**. Live InfoLEG pagination keeps in-process session state;
+> multiple replicas would split it. Scale by serving from the dataset, not by replicas.
+
+### Docker + Caddy (HTTPS)
+
+```bash
+cp secrets/api-keys.json.example secrets/api-keys.json   # then edit the keys
+docker compose run --rm mcp python -m arg_legal_mcp build-dataset   # one-time, heavy
+# edit Caddyfile (domain + email), then:
+docker compose up -d
+```
+
+Caddy terminates TLS (automatic Let's Encrypt) and proxies to the MCP container on
+`:8000`. The MCP app still enforces API-key auth behind the proxy (defense in depth).
+
+### systemd (no Docker)
+
+Install under `/opt/argentina-legal-data-mcp` with a venv, then:
+
+```bash
+sudo cp systemd/argentina-legal-data-mcp*.service systemd/*.timer /etc/systemd/system/
+sudo systemctl enable --now argentina-legal-data-mcp.service
+sudo systemctl enable --now argentina-legal-data-mcp-dataset.timer   # weekly dataset refresh
+```
+
+Front it with the [Caddyfile](Caddyfile) (or any reverse proxy that terminates HTTPS).
+
+### Add as a remote connector in Claude
+
+Point your MCP client at `https://<your-domain>/mcp` (streamable-http) and set the
+header `Authorization: Bearer <your-api-key>`.
+
+## Health & diagnostics
+
+- `data_health` — per-source availability, freshness, and a dataset FTS smoke test.
+- `requests_recientes` — recent tool calls (HTTP transport request log).
+- `infoleg_estado_dataset` — dataset availability / row count / build date.
+
 ## Configuration
 
 All settings use the `ARGMCP_` env prefix — see [.env.example](.env.example).
@@ -75,8 +129,11 @@ All settings use the `ARGMCP_` env prefix — see [.env.example](.env.example).
 ```bash
 pip install -e ".[dev]"
 ruff check src tests
-pytest -q
+pytest -q          # 34 tests; no network required (HTTP mocked with respx)
 ```
 
-Remote/HTTP deployment (auth, Docker, systemd, Caddy) is documented below once Phase 2
-lands. The tests do not require network access (HTTP is mocked with `respx`).
+> Note: during development the public InfoLEG site (`servicios.infoleg.gob.ar`) was
+> returning `503`/`403` to automated clients. That is exactly the scenario the offline
+> dataset + graceful degradation handle; the live code paths are covered by mocked tests.
+> Run `python -m arg_legal_mcp update-configs` and `build-dataset` when the site/dataset
+> hosts are reachable to populate `data/dependencias.json` and `data/infoleg.sqlite`.

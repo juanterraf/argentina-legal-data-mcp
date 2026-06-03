@@ -1,0 +1,20 @@
+# Caddy reverse proxy with automatic HTTPS for the MCP server.
+# Replace mcp.example.com with your domain and set a valid email for ACME.
+# Caddy obtains and renews Let's Encrypt certificates automatically.
+
+{
+	email you@example.com
+}
+
+mcp.example.com {
+	encode zstd gzip
+
+	# The streamable-http MCP endpoint (and SSE if you switch transports).
+	reverse_proxy mcp:8000
+
+	# Defense in depth — auth is also enforced inside the app (API keys).
+	header {
+		Strict-Transport-Security "max-age=31536000;"
+		X-Content-Type-Options "nosniff"
+	}
+}

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP
 
 from .config import Settings, get_settings
+from .health import HealthStore
 from .infoleg.cache import InfoLegCache
 from .infoleg.catalogs import CatalogService
 from .infoleg.client import InfoLegClient
@@ -18,6 +19,7 @@ from .infoleg.dataset import DatasetStore
 from .infoleg.services import InfoLegService
 from .infoleg.session import SessionManager
 from .prompts import register_prompts
+from .tools_common import register_common
 from .tools_infoleg import register_infoleg
 
 SERVER_NAME = "Argentina Legal & Data MCP"
@@ -38,6 +40,7 @@ class ServiceContainer:
     cache: InfoLegCache | None
     session_manager: SessionManager
     infoleg: InfoLegService
+    health: HealthStore
 
     def close(self) -> None:
         self.session_manager.close()
@@ -54,6 +57,11 @@ def build_service(settings: Settings | None = None, *, use_cache: bool = True) -
         tipos_path=settings.data_dir / "tipos_norma.json",
     )
     dataset = DatasetStore(settings.dataset_path)
+    health = HealthStore(settings.data_dir / "health.sqlite")
+    if dataset.available():
+        health.record_freshness(
+            "infoleg_dataset", healthy=True, last_data_date=dataset.get_meta("built_at")
+        )
     cache = InfoLegCache(settings.cache_dir) if use_cache else None
     session_manager = SessionManager(
         user_agent=settings.user_agent,
@@ -77,6 +85,7 @@ def build_service(settings: Settings | None = None, *, use_cache: bool = True) -
         cache=cache,
         session_manager=session_manager,
         infoleg=infoleg,
+        health=health,
     )
 
 
@@ -90,6 +99,7 @@ def build_server(settings: Settings | None = None) -> tuple[FastMCP, ServiceCont
         host=settings.host,
         port=settings.port,
     )
-    register_infoleg(mcp, container.infoleg, container.catalogs)
+    register_infoleg(mcp, container.infoleg, container.catalogs, health=container.health)
+    register_common(mcp, health=container.health, dataset=container.dataset)
     register_prompts(mcp)
     return mcp, container
