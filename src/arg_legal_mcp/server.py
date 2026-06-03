@@ -22,6 +22,7 @@ from .prompts import register_prompts
 from .sources.register import register_sources
 from .tools_common import register_common
 from .tools_infoleg import register_infoleg
+from .tools_search_fetch import register_search_fetch
 
 SERVER_NAME = "Argentina Legal & Data MCP"
 INSTRUCTIONS = (
@@ -102,6 +103,7 @@ def build_server(settings: Settings | None = None) -> tuple[FastMCP, ServiceCont
     )
     register_infoleg(mcp, container.infoleg, container.catalogs, health=container.health)
     register_common(mcp, health=container.health, dataset=container.dataset)
+    register_search_fetch(mcp, container.infoleg)
     register_sources(mcp, settings, dataset=container.dataset)
     register_prompts(mcp)
     return mcp, container
