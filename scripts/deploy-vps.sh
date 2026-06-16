@@ -11,7 +11,7 @@
 #   - nginx vhost mcp.derechointeligente.com.ar → 127.0.0.1:8090  + certbot --nginx
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
-VPS="${VPS:-vps}"                 # alias de ~/.ssh/config (HostName 187.127.8.156)
+VPS="${VPS:-vps}"                 # alias de tu ~/.ssh/config (Host vps -> tu servidor)
 APP="/opt/argentina-legal-data-mcp"
 SVC="argentina-legal-data-mcp.service"
 
