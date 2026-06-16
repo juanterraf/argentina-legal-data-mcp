@@ -1,5 +1,14 @@
 # Argentina Legal & Data MCP
 
+![Argentina Legal & Data MCP](assets/banner.png)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+![MCP](https://img.shields.io/badge/MCP-streamable--http-7c3aed)
+![Estado](https://img.shields.io/badge/estado-en%20vivo-brightgreen)
+![Tests](https://img.shields.io/badge/tests-57%20passing-success)
+[![por derechointeligente.com.ar](https://img.shields.io/badge/por-derechointeligente.com.ar-0b3d91)](https://derechointeligente.com.ar)
+
 > **Un asistente de IA con acceso a los datos públicos oficiales de Argentina.**
 > Conectás Claude / ChatGPT a este servidor y te responde con **legislación nacional,
 > dólar, BCRA, INDEC, feriados y más** — con **fuente citada** y sin inventar.
@@ -81,8 +90,9 @@ vez conectado, le escribís esto tal cual a Claude/ChatGPT.
 - *"¿A cuánto está el **dólar** hoy (oficial/blue/MEP)? Convertí una condena de **USD 10.000** al oficial."*
 - *"Último valor de **reservas** y de la **tasa de política monetaria** del BCRA."*
 
-> 👉 Más ideas: **20 casos para tributaristas** y **20 para abogados/relatores** en
-> [`EVALS.md`](EVALS.md) y en la documentación del repo.
+> 👉 **40 casos de uso prácticos** (20 para tributaristas + 20 para abogados/relatores),
+> con prompts listos: **[`docs/casos-de-uso.md`](docs/casos-de-uso.md)**. Preguntas
+> verificables de prueba en [`EVALS.md`](EVALS.md).
 
 ---
 
