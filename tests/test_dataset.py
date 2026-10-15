@@ -35,14 +35,15 @@ def test_get_norma(store):
     assert "consolidado" in n["texto_actualizado"]
 
 
-def test_fts_search_recency_boost(store):
-    # Both Ley 27275 (2016) and Ley 16986 (1966) match "informacion".
+def test_fts_search_relevance_and_recency_order(store):
+    # Both Ley 27275 (2016, modified 121 times) and Ley 16986 (1966) match "informacion".
     rows, total = store.search(texto="informacion", limit=5, offset=0)
     assert total >= 2
-    # Recency boost should rank the 2016 norma above the 1966 one.
     ids = [r["id_norma"] for r in rows]
-    assert ids[0] == 265949
+    assert ids[0] == 265949  # title match + base-norm boost
     assert 16986 in ids
+    rows, _ = store.search(texto="informacion", limit=5, orden="recientes")
+    assert rows[0]["id_norma"] == 265949  # 2016 before 1966
 
 
 def test_fts_diacritic_insensitive(store):
@@ -56,12 +57,12 @@ def test_search_by_filters(store):
     assert rows[0]["id_norma"] == 99999
 
 
-def test_vinculos_fallback(store):
-    activos = store.vinculos_fallback(265949, modo=1)  # modifica_a = "111 222"
-    ids = {v["id"] for v in activos}
-    assert {111, 222} <= ids
-    pasivos = store.vinculos_fallback(265949, modo=2)  # modificada_por = "300100"
-    assert any(v["id"] == 300100 for v in pasivos)
+def test_vinculos_count(store):
+    # modifica_a / modificada_por are COUNTS in the official dataset, never ids.
+    assert store.vinculos_count(265949, modo=1) == 2
+    assert store.vinculos_count(265949, modo=2) == 121
+    assert store.vinculos_count(16986, modo=2) == 0
+    assert store.vinculos_count(1, modo=2) is None
 
 
 def test_to_fts5_query():
@@ -78,3 +79,15 @@ def test_to_fts5_query():
     assert to_fts5_query("-eolica") == 'NOT "eolica"'
     # phrase preserved
     assert to_fts5_query('"transporte de carga"') == '"transporte de carga"'
+
+
+def test_to_fts5_query_expanded():
+    # stopwords dropped, singular/plural variants, explicit AND between groups
+    assert to_fts5_query("impuesto a las ganancias", expand=True) == (
+        '("impuesto" OR "impuestos") AND ("ganancias" OR "ganancia")'
+    )
+    # a leading exclusion is moved to the end (FTS5 NOT is binary)
+    assert to_fts5_query("-eolica energia", expand=True) == (
+        '("energia" OR "energias") NOT ("eolica" OR "eolicas")'
+    )
+    assert to_fts5_query("-eolica", expand=True) is None

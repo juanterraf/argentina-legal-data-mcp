@@ -3,21 +3,38 @@
 Usage:
   python -m arg_legal_mcp                 # run server (transport from ARGMCP_TRANSPORT)
   python -m arg_legal_mcp serve [--transport stdio|streamable-http|sse]
-  python -m arg_legal_mcp build-dataset   # download official ZIP -> SQLite (heavy)
-  python -m arg_legal_mcp update-configs  # regenerate catalogs from the live form
+  python -m arg_legal_mcp build-dataset   # download official ZIP (~49 MB) -> SQLite
+  python -m arg_legal_mcp update-configs  # regenerate catalogs (live form + dataset)
+
+The dataset rebuild is ONLY available here (and via the systemd timer), never as an
+MCP tool. It is atomic (temp file + rename) and locked against concurrent runs; the
+running server picks up the new file without a restart.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 
 from .config import get_settings
 
 
+def _setup_logging() -> None:
+    # stderr only: on stdio transport, stdout is the MCP protocol channel.
+    logging.basicConfig(
+        level=logging.INFO, stream=sys.stderr,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    # httpx logs every request URL at INFO; URLs can carry user data (e.g. a CUIT).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 def _serve(transport: str | None) -> None:
     from .server import build_server
 
+    _setup_logging()
     settings = get_settings()
     if transport:
         settings.transport = transport
@@ -35,21 +52,43 @@ def _serve(transport: str | None) -> None:
 
 
 def _build_dataset() -> int:
+    from .health import DATASET_SOURCE, HealthStore
+    from .infoleg.dataset import DatasetBuildError, DatasetBuildLockedError
+
     settings = get_settings()
     settings.ensure_dirs()
-    if settings.backend == "postgres":
-        if not settings.pg_dsn:
-            print("ERROR: ARGMCP_BACKEND=postgres requires ARGMCP_PG_DSN", file=sys.stderr)
-            return 2
-        from .infoleg.dataset_pg import download_and_build_pg
+    health = HealthStore(settings.data_dir / "health.sqlite")
+    try:
+        if settings.backend == "postgres":
+            if not settings.pg_dsn:
+                print("ERROR: ARGMCP_BACKEND=postgres requires ARGMCP_PG_DSN", file=sys.stderr)
+                return 2
+            from .infoleg.dataset_pg import download_and_build_pg
 
-        count = download_and_build_pg(settings.pg_dsn, user_agent=settings.user_agent)
-        print(f"OK: {count} normas -> postgres")
-        return 0
-    from .infoleg.dataset import download_and_build
+            count = download_and_build_pg(
+                settings.pg_dsn, user_agent=settings.user_agent,
+                lock_path=settings.data_dir / "infoleg-pg",
+            )
+            target = "postgres"
+        else:
+            from .infoleg.dataset import download_and_build
 
-    count = download_and_build(settings.dataset_path, user_agent=settings.user_agent)
-    print(f"OK: {count} normas -> {settings.dataset_path}")
+            count = download_and_build(settings.dataset_path, user_agent=settings.user_agent)
+            target = str(settings.dataset_path)
+    except DatasetBuildLockedError as exc:
+        print(f"SKIP: {exc}", file=sys.stderr)
+        return 3
+    except (DatasetBuildError, OSError, ValueError) as exc:
+        health.record_freshness(DATASET_SOURCE, healthy=False, error=str(exc)[:200])
+        print(f"ERROR: no se pudo reconstruir el dataset: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # httpx errors, etc.
+        health.record_freshness(DATASET_SOURCE, healthy=False, error=type(exc).__name__)
+        print(f"ERROR: no se pudo reconstruir el dataset: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        return 1
+    health.record_freshness(DATASET_SOURCE, healthy=True)
+    print(f"OK: {count} normas -> {target}")
     return 0
 
 

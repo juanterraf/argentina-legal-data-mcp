@@ -1,7 +1,103 @@
 [
-  { "id": 1, "nombre": "Ley" },
-  { "id": 2, "nombre": "Decreto" },
-  { "id": 3, "nombre": "Resolución" },
-  { "id": 4, "nombre": "Disposición" },
-  { "id": 8, "nombre": "Decisión Administrativa" }
+  {
+    "nombre": "Resolución",
+    "cantidad": 216200,
+    "id_infoleg": 3
+  },
+  {
+    "nombre": "Decreto",
+    "cantidad": 75477,
+    "id_infoleg": 2
+  },
+  {
+    "nombre": "Disposición",
+    "cantidad": 50835,
+    "id_infoleg": 4
+  },
+  {
+    "nombre": "Decisión Administrativa",
+    "cantidad": 31090,
+    "id_infoleg": 8
+  },
+  {
+    "nombre": "Ley",
+    "cantidad": 27599,
+    "id_infoleg": 1
+  },
+  {
+    "nombre": "Comunicación",
+    "cantidad": 13861
+  },
+  {
+    "nombre": "Decreto/Ley",
+    "cantidad": 2462
+  },
+  {
+    "nombre": "Nota Externa",
+    "cantidad": 641
+  },
+  {
+    "nombre": "Directiva",
+    "cantidad": 565
+  },
+  {
+    "nombre": "Decisión",
+    "cantidad": 495
+  },
+  {
+    "nombre": "Acordada",
+    "cantidad": 359
+  },
+  {
+    "nombre": "Instrucción",
+    "cantidad": 324
+  },
+  {
+    "nombre": "Nota",
+    "cantidad": 222
+  },
+  {
+    "nombre": "Circular",
+    "cantidad": 212
+  },
+  {
+    "nombre": "Acta",
+    "cantidad": 154
+  },
+  {
+    "nombre": "Recomendación",
+    "cantidad": 19
+  },
+  {
+    "nombre": "Laudo",
+    "cantidad": 17
+  },
+  {
+    "nombre": "Convenio",
+    "cantidad": 14
+  },
+  {
+    "nombre": "Acuerdo",
+    "cantidad": 9
+  },
+  {
+    "nombre": "Providencia",
+    "cantidad": 4
+  },
+  {
+    "nombre": "Ordenanza",
+    "cantidad": 2
+  },
+  {
+    "nombre": "Protocolo",
+    "cantidad": 2
+  },
+  {
+    "nombre": "Actuacion",
+    "cantidad": 1
+  },
+  {
+    "nombre": "Interpretación",
+    "cantidad": 1
+  }
 ]

@@ -22,7 +22,7 @@ from arg_legal_mcp.infoleg.dataset_pg import (
 )
 
 _INTERFACE = {"available", "count", "get_meta", "get_norma", "resolve_id", "search",
-              "vinculos_fallback"}
+              "vinculos_count", "tipos_norma", "organismos"}
 
 
 def test_sqlite_and_pg_share_interface():

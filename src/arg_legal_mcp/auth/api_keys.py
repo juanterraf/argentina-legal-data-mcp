@@ -10,8 +10,10 @@ keys can be revoked/added without restarting the server. Roles: ``dev`` | ``user
 
 from __future__ import annotations
 
+import hmac
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +27,7 @@ class ApiKeyStore:
         self._by_key: dict[str, Role] = {}
         self._mtime: float = -1.0
         self._last_check: float = 0.0
+        self._lock = threading.Lock()
         self._load(force=True)
 
     def _load(self, *, force: bool = False) -> None:
@@ -55,15 +58,27 @@ class ApiKeyStore:
             print(f"[auth] Invalid API keys file ({exc}); keeping previous set.", file=sys.stderr)
 
     def _maybe_reload(self) -> None:
-        now = time.time()
-        if now - self._last_check >= self.reload_interval:
-            self._last_check = now
-            self._load()
+        with self._lock:
+            now = time.time()
+            if now - self._last_check >= self.reload_interval:
+                self._last_check = now
+                self._load()
+
+    def _match(self, token: str) -> Role | None:
+        """Constant-time lookup: compares against EVERY key, no early exit."""
+        if not token:
+            return None
+        given = token.encode("utf-8", "surrogatepass")
+        found: Role | None = None
+        for key, role in list(self._by_key.items()):
+            if hmac.compare_digest(given, key.encode("utf-8", "surrogatepass")):
+                found = role
+        return found
 
     def validate(self, token: str) -> bool:
         self._maybe_reload()
-        return token in self._by_key
+        return self._match(token) is not None
 
     def role(self, token: str) -> Role | None:
         self._maybe_reload()
-        return self._by_key.get(token)
+        return self._match(token)

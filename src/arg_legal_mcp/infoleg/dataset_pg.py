@@ -1,6 +1,9 @@
-"""PostgreSQL dataset backend (optional): tsvector full-text + pg_trgm + recency boost.
+"""PostgreSQL dataset backend (optional): weighted tsvector full-text + pg_trgm.
 
-Mirrors the SQLite ``DatasetStore`` interface so the service layer is backend-agnostic.
+Mirrors the SQLite ``DatasetStore`` interface (and its ranking: title weight, base-norm
+boost by number of modifications, norm-type boost, title match, mild recency; direct
+"Ley 20628" hits first; ``orden``; ``materia="tributaria"``) so the service layer is
+backend-agnostic.
 ``psycopg`` is an optional dependency (``pip install ".[postgres]"``); it is imported
 lazily so this module can be imported (and introspected) without it installed.
 
@@ -16,7 +19,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .dataset import COLUMNS, _open_csv
+from .dataset import (
+    COLUMNS,
+    _open_csv,
+    dataset_build_lock,
+    extract_csv_safely,
+    parse_referencias,
+    tributaria_clause,
+)
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +70,12 @@ def _to_websearch_query(texto: str | None) -> str | None:
     return q or None
 
 _FTS_EXPR = (
-    "to_tsvector('spanish', "
-    "coalesce(titulo_sumario,'') || ' ' || coalesce(titulo_resumido,'') || ' ' || "
-    "coalesce(texto_resumido,''))"
+    "setweight(to_tsvector('spanish', coalesce(titulo_sumario,'')), 'A') || "
+    "setweight(to_tsvector('spanish', coalesce(titulo_resumido,'')), 'B') || "
+    "setweight(to_tsvector('spanish', coalesce(texto_resumido,'')), 'D')"
+)
+_TITLE_EXPR = (
+    "to_tsvector('spanish', coalesce(titulo_sumario,'') || ' ' || coalesce(titulo_resumido,''))"
 )
 
 _DATE_COLS = {"fecha_sancion", "fecha_boletin"}
@@ -80,10 +93,16 @@ CREATE INDEX IF NOT EXISTS idx_normas_tipo_numero ON normas (lower(tipo_norma), 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
-# Recency boost: newer normas float up among equally-relevant matches.
+_FECHA_PUB_PG = "COALESCE(fecha_boletin, fecha_sancion)"
+_MODS_PG = "(CASE WHEN modificada_por ~ '^[0-9]+$' THEN modificada_por::float ELSE 0 END)"
+# Same factors as the SQLite ranking (see dataset.py).
 _BOOST_PG = (
-    "(1.0 + 1.0 / (1.0 + GREATEST("
-    "EXTRACT(EPOCH FROM (now() - COALESCE(fecha_boletin, fecha_sancion, DATE '1900-01-01')))"
+    f"(1.0 + 2.0 * {_MODS_PG} / ({_MODS_PG} + 15.0))"
+    " * (CASE tipo_norma WHEN 'Ley' THEN 1.6 WHEN 'Decreto/Ley' THEN 1.4 "
+    "WHEN 'Decreto' THEN 1.25 ELSE 1.0 END)"
+    f" * (CASE WHEN {_TITLE_EXPR} @@ websearch_to_tsquery('spanish', %(q)s) THEN 2.0 ELSE 1.0 END)"
+    " * (1.0 + 0.15 / (1.0 + GREATEST("
+    f"EXTRACT(EPOCH FROM (now() - COALESCE({_FECHA_PUB_PG}, DATE '1900-01-01')))"
     "/86400.0/365.25, 0.0)))"
 )
 
@@ -114,7 +133,8 @@ class PgDatasetStore:
         import psycopg
         from psycopg.rows import dict_row
 
-        return psycopg.connect(self.dsn, row_factory=dict_row)
+        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=10,
+                               options="-c statement_timeout=20000")
 
     def available(self) -> bool:
         try:
@@ -163,14 +183,17 @@ class PgDatasetStore:
         *,
         texto: str | None = None,
         tipo_norma: str | None = None,
-        numero: int | None = None,
+        numero: int | str | None = None,
         anio: int | None = None,
         organismo: str | None = None,
         desde: str | None = None,
         hasta: str | None = None,
         limit: int = 5,
         offset: int = 0,
+        orden: str = "relevancia",
+        materia: str | None = None,
     ) -> tuple[list[dict], int]:
+        limit, offset = max(1, int(limit)), max(0, int(offset))
         clauses, params = [], {}
         if tipo_norma:
             clauses.append("lower(tipo_norma)=lower(%(tipo)s)")
@@ -184,33 +207,67 @@ class PgDatasetStore:
         if organismo:
             clauses.append("organismo_origen ILIKE %(org)s")
             params["org"] = f"%{organismo}%"
+        # Publication date; old norms without fecha_boletin use fecha_sancion.
         if desde:
-            clauses.append("fecha_boletin >= %(desde)s")
+            clauses.append(f"{_FECHA_PUB_PG} >= %(desde)s")
             params["desde"] = desde
         if hasta:
-            clauses.append("fecha_boletin <= %(hasta)s")
+            clauses.append(f"{_FECHA_PUB_PG} <= %(hasta)s")
             params["hasta"] = hasta
+        if materia == "tributaria":
+            sql, values = tributaria_clause(like="ILIKE", ph="%s")
+            for i, v in enumerate(values):
+                sql = sql.replace("%s", f"%(trib{i})s", 1)
+                params[f"trib{i}"] = v
+            clauses.append(sql.replace("n.", ""))
+        elif materia:
+            raise ValueError(f"materia desconocida: {materia}")
 
         with self._connect() as conn:
             if texto:
-                q = _to_websearch_query(texto)
+                refs, resto = parse_referencias(texto)
+                direct: list[dict] = []
+                extra = (" AND " + " AND ".join(clauses)) if clauses else ""
+                for i, (tipo, num, an) in enumerate(refs[:5]):
+                    p = {**params, f"rt{i}": tipo, f"rn{i}": num}
+                    cond = f"tipo_norma=%(rt{i})s AND numero_norma=%(rn{i})s"
+                    if an is not None:
+                        p[f"ra{i}"] = an
+                        cond += (f" AND (EXTRACT(YEAR FROM fecha_sancion)=%(ra{i})s "
+                                 f"OR EXTRACT(YEAR FROM fecha_boletin)=%(ra{i})s)")
+                    for r in conn.execute(
+                        f"SELECT * FROM normas WHERE {cond}{extra} "
+                        f"ORDER BY {_FECHA_PUB_PG} DESC NULLS LAST LIMIT 10", p
+                    ).fetchall():
+                        if all(d["id_norma"] != r["id_norma"] for d in direct):
+                            direct.append(dict(r))
+                head = direct[offset: offset + limit]
+                q = _to_websearch_query(resto)
                 if not q:
-                    return [], 0
+                    return [_stringify_dates(r) for r in head], len(direct)
                 params["q"] = q
                 where = "fts @@ websearch_to_tsquery('spanish', %(q)s)"
                 if clauses:
                     where += " AND " + " AND ".join(clauses)
+                if direct:
+                    params["excl"] = [d["id_norma"] for d in direct]
+                    where += " AND NOT (id_norma = ANY(%(excl)s))"
                 total = conn.execute(
                     f"SELECT count(*) AS c FROM normas WHERE {where}", params
                 ).fetchone()["c"]
-                params["limit"] = limit
-                params["offset"] = offset
+                params["limit"] = limit - len(head)
+                params["offset"] = max(0, offset - len(direct))
+                order = (
+                    f"{_FECHA_PUB_PG} DESC NULLS LAST" if orden == "recientes" else
+                    f"ts_rank(fts, websearch_to_tsquery('spanish', %(q)s), 1) * {_BOOST_PG} DESC"
+                )
                 rows = conn.execute(
-                    f"SELECT * FROM normas WHERE {where} "
-                    f"ORDER BY ts_rank(fts, websearch_to_tsquery('spanish', %(q)s)) * {_BOOST_PG} DESC "
+                    f"SELECT * FROM normas WHERE {where} ORDER BY {order} "
                     "LIMIT %(limit)s OFFSET %(offset)s",
                     params,
-                ).fetchall()
+                ).fetchall() if params["limit"] > 0 else []
+                rows = head + [dict(r) for r in rows]
+                total = int(total) + len(direct)
             else:
                 where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
                 total = conn.execute(
@@ -219,22 +276,35 @@ class PgDatasetStore:
                 params["limit"] = limit
                 params["offset"] = offset
                 rows = conn.execute(
-                    f"SELECT * FROM normas{where} ORDER BY fecha_boletin DESC NULLS LAST "
+                    f"SELECT * FROM normas{where} ORDER BY {_FECHA_PUB_PG} DESC NULLS LAST "
                     "LIMIT %(limit)s OFFSET %(offset)s",
                     params,
                 ).fetchall()
         return [_stringify_dates(dict(r)) for r in rows], int(total)
 
-    def vinculos_fallback(self, id_norma: int, modo: int) -> list[dict]:
+    def vinculos_count(self, id_norma: int, modo: int) -> int | None:
+        """Counts from ``modifica_a`` / ``modificada_por`` (the dataset has no ids)."""
         norma = self.get_norma(id_norma)
         if not norma:
-            return []
-        col = "modifica_a" if modo == 1 else "modificada_por"
-        raw = (norma.get(col) or "").strip()
-        if not raw:
-            return []
-        ids = [int(x) for x in re.findall(r"\b(\d{3,7})\b", raw)]
-        return [{"id": i, "raw": raw} for i in ids] or [{"id": None, "raw": raw}]
+            return None
+        raw = str(norma.get("modifica_a" if modo == 1 else "modificada_por") or "").strip()
+        return int(raw) if raw.isdigit() else (0 if not raw else None)
+
+    def tipos_norma(self) -> list[tuple[str, int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tipo_norma AS t, count(*) AS c FROM normas WHERE tipo_norma IS NOT NULL "
+                "GROUP BY tipo_norma ORDER BY 2 DESC"
+            ).fetchall()
+            return [(r["t"], int(r["c"])) for r in rows]
+
+    def organismos(self) -> list[tuple[str, int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT organismo_origen AS o, count(*) AS c FROM normas "
+                "WHERE organismo_origen IS NOT NULL GROUP BY organismo_origen ORDER BY 2 DESC"
+            ).fetchall()
+            return [(r["o"], int(r["c"])) for r in rows]
 
 
 def _stringify_dates(row: dict) -> dict:
@@ -301,26 +371,29 @@ def import_csv_pg(dsn: str, csv_path: str | Path, batch_size: int = 1000) -> int
 
 
 def download_and_build_pg(
-    dsn: str, *, zip_url: str | None = None, user_agent: str = "argentina-legal-data-mcp/0.1",
-    tmp_dir: str | Path | None = None,
+    dsn: str, *, zip_url: str | None = None, user_agent: str = "argentina-legal-data-mcp",
+    tmp_dir: str | Path | None = None, lock_path: str | Path | None = None,
 ) -> int:
-    """Download the official ZIP and (re)build the Postgres dataset."""
+    """Download the official ZIP, extract it safely and rebuild the Postgres dataset.
+
+    The import runs in one transaction (TRUNCATE + inserts), so readers keep seeing the
+    old rows until it commits. ``lock_path`` serializes concurrent rebuilds.
+    """
+    import shutil
     import tempfile
-    import zipfile
 
     from .dataset import ZIP_URL, _download_zip
 
     zip_url = zip_url or ZIP_URL
-    tmp = Path(tmp_dir or tempfile.gettempdir())
-    tmp.mkdir(parents=True, exist_ok=True)
-    zip_path = tmp / "infoleg-dump.zip"
-    _download_zip(zip_url, zip_path, user_agent=user_agent)
-    extract_dir = tmp / "infoleg-dump"
-    extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(extract_dir)
-    csvs = sorted(extract_dir.rglob("*.csv"), key=lambda p: p.stat().st_size, reverse=True)
-    if not csvs:
-        raise FileNotFoundError("No CSV found inside the InfoLEG ZIP")
-    print(f"Importing {csvs[0].name} into Postgres ...", file=sys.stderr)
-    return import_csv_pg(dsn, csvs[0])
+    lock = Path(lock_path or Path(tempfile.gettempdir()) / "argmcp-infoleg-pg")
+    with dataset_build_lock(lock):
+        work = Path(tempfile.mkdtemp(prefix=".infoleg-build-", dir=tmp_dir))
+        try:
+            zip_path = work / "infoleg.zip"
+            _download_zip(zip_url, zip_path, user_agent=user_agent)
+            csv_path = extract_csv_safely(zip_path, work / "csv")
+            zip_path.unlink(missing_ok=True)
+            print("Importing CSV into Postgres ...", file=sys.stderr)
+            return import_csv_pg(dsn, csv_path)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)

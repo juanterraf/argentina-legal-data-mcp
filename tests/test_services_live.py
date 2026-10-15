@@ -52,9 +52,17 @@ def test_buscar_dataset_mode(tmp_path):
 def test_buscar_validation(tmp_path):
     svc = make_service(tmp_path, with_dataset=True).infoleg
     with pytest.raises(ValueError):
-        svc.buscar_normas(numero=27275)  # 1 param, no texto
+        svc.buscar_normas()  # nothing to search for
     with pytest.raises(ValueError):
-        svc.buscar_normas(tipo_norma=1, anio_sancion=2016)  # Ley + anio
+        svc.buscar_normas(tipo_norma="Inexistente", numero=1)
+    with pytest.raises(ValueError):
+        svc.buscar_normas(texto="x", orden="alfabetico")
+    # The dataset accepts a single filter (the live form's ">= 2" rule is live-only).
+    out = svc.buscar_normas(numero=27275)
+    assert out["resultados"][0]["id"] == 265949
+    # Live-only constraint (Ley + anio) degrades to the dataset with an explicit aviso.
+    out = svc.buscar_normas(tipo_norma="Ley", numero=27275, anio_sancion=2016, en_vivo=True)
+    assert out["fuente"] == "dataset (degradado)" and "aviso" in out
 
 
 # ── live (respx) ──────────────────────────────────────────────────────────────

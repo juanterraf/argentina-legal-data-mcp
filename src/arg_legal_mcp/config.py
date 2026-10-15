@@ -11,6 +11,12 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import __version__
+
+DEFAULT_USER_AGENT = (
+    f"argentina-legal-data-mcp/{__version__} (+https://derechointeligente.com.ar)"
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -38,22 +44,21 @@ class Settings(BaseSettings):
 
     # ── InfoLEG live client ────────────────────────────────────────────────--
     infoleg_base_url: str = "https://servicios.infoleg.gob.ar/infolegInternet"
-    user_agent: str = (
-        "argentina-legal-data-mcp/0.1 "
-        "(+https://github.com/your-org/argentina-legal-data-mcp)"
-    )
-    http_timeout: float = 20.0
+    user_agent: str = DEFAULT_USER_AGENT
+    http_timeout: float = 15.0  # per HTTP request (all outbound clients)
+    # Total wall-time budget for the live calls of ONE tool call (never hang the client).
+    live_budget_seconds: float = 25.0
     session_ttl: int = 300
 
     # ── Pagination / chunking ──────────────────────────────────────────────--
     infoleg_page_size: int = 50  # InfoLEG returns 50 results per real page
     mcp_page_size: int = 5  # we re-paginate to small pages for the agent
-    text_chunk_size: int = 2000  # characters per text chunk
+    text_chunk_size: int = 8000  # characters per text chunk
 
     # ── Auth (HTTP transports only) ────────────────────────────────────────--
     auth_enabled: bool = False
     api_keys_path: Path = Path("./secrets/api-keys.json")
-    jwt_audience: str = ""
+    max_body_bytes: int = 1_048_576  # max JSON-RPC request body accepted (HTTP)
 
     # ── Backend ──────────────────────────────────────────────────────────────
     backend: str = "sqlite"  # sqlite | postgres

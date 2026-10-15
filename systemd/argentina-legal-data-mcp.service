@@ -1,31 +1,56 @@
 [Unit]
-Description=Argentina Legal & Data MCP (streamable-http)
+Description=Argentina Legal & Data MCP (streamable-http, 127.0.0.1:8090 behind nginx)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Adjust User/paths to your install. Use a dedicated unprivileged user.
 User=argmcp
 Group=argmcp
 WorkingDirectory=/opt/argentina-legal-data-mcp
-Environment=ARGMCP_TRANSPORT=streamable-http
-Environment=ARGMCP_HOST=127.0.0.1
-Environment=ARGMCP_PORT=8000
-Environment=ARGMCP_AUTH_ENABLED=true
-Environment=ARGMCP_API_KEYS_PATH=/opt/argentina-legal-data-mcp/secrets/api-keys.json
-Environment=ARGMCP_DATA_DIR=/opt/argentina-legal-data-mcp/data
-Environment=ARGMCP_CACHE_DIR=/var/lib/argentina-legal-data-mcp/cache
-Environment=ARGMCP_DATASET_PATH=/var/lib/argentina-legal-data-mcp/infoleg.sqlite
+# Same .env the app reads (ARGMCP_TRANSPORT/HOST/PORT/AUTH_ENABLED/DATA_DIR/CACHE_DIR/
+# DATASET_PATH/USER_AGENT). Production: 127.0.0.1:8090, auth off, data in
+# /opt/argentina-legal-data-mcp/data and cache in /opt/argentina-legal-data-mcp/.cache.
+EnvironmentFile=-/opt/argentina-legal-data-mcp/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/argentina-legal-data-mcp/.venv/bin/python -m arg_legal_mcp serve --transport streamable-http
 Restart=on-failure
 RestartSec=3
-# Hardening
-NoNewPrivileges=true
-PrivateTmp=true
+UMask=0027
+
+# ── Hardening ──────────────────────────────────────────────────────────────────
+# The only writable paths are the data dir (dataset, health.sqlite, build lock/temp) and
+# the cache dir. IF YOU CHANGE ARGMCP_DATA_DIR / ARGMCP_CACHE_DIR / ARGMCP_DATASET_PATH in
+# .env, change ReadWritePaths here AND in argentina-legal-data-mcp-dataset.service.
+ReadWritePaths=/opt/argentina-legal-data-mcp/data /opt/argentina-legal-data-mcp/.cache
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/argentina-legal-data-mcp
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# MemoryDenyWriteExecute is intentionally NOT set: libffi/cffi-based wheels can need
+# W+X pages and would crash at runtime.
+LimitNOFILE=4096
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target

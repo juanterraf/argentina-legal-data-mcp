@@ -15,9 +15,9 @@ def register_prompts(mcp) -> None:
         return (
             f"Necesito ubicar la norma: {ref}.\n\n"
             "Paso a paso:\n"
-            f"1. Llama a infoleg_resolver_id(tipo='{tipo}', numero={numero or 'NUMERO'}) "
-            "para obtener el id_norma. Si falla, usa infoleg_buscar_normas con "
-            f"texto o tipo_norma+numero (en_vivo=true si hace falta).\n"
+            f"1. Llama a infoleg_buscar_normas(texto='{ref}') para obtener el id: las "
+            "referencias tipo+numero salen primero. Si no aparece, proba tipo_norma + "
+            "numero (+ anio_sancion) o en_vivo=true.\n"
             "2. Con el id, llama a infoleg_ver_norma para traer la ficha completa.\n"
             "3. Resume: identidad, organismo, fechas de sancion y publicacion, y si "
             "tiene texto actualizado disponible.\n"

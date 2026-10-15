@@ -1,13 +1,21 @@
-"""Extra-source tools (dólar, feriados, BCRA, INDEC, AFIP, boletín, tributaria) — mocked HTTP."""
+"""Extra-source tools (dólar, feriados, BCRA, INDEC, boletín, tributaria) — mocked HTTP."""
 
 from __future__ import annotations
 
 import httpx
+import pytest
 import respx
 
-from arg_legal_mcp.sources import afip, bcra, boletin, dolar, feriados, indec, tributaria
+from arg_legal_mcp.sources import base, bcra, boletin, dolar, feriados, indec, tributaria
 
 UA = "test-agent/1.0"
+
+
+@pytest.fixture(autouse=True)
+def _clean_cache():
+    base.clear_cache()
+    yield
+    base.clear_cache()
 
 
 def test_dolar_cotizaciones_ok():
@@ -72,7 +80,7 @@ def test_bcra_variables_catalog():
 
 
 def test_bcra_variables_catalog_paginates():
-    """Catalog spanning two pages (count=3, limit=2) is fully collected (fix #3)."""
+    """Catalog spanning two pages (count=3) is fully collected (fix #3)."""
     def responder(request):
         from urllib.parse import parse_qs, urlparse
         off = int(parse_qs(urlparse(str(request.url)).query).get("offset", ["0"])[0])
@@ -86,7 +94,7 @@ def test_bcra_variables_catalog_paginates():
 
     with respx.mock(assert_all_called=True) as rsx:
         rsx.get(url__regex=r"v4\.0/Monetarias\?").mock(side_effect=responder)
-        out = bcra.variables(limit=2, user_agent=UA)
+        out = bcra.variables(user_agent=UA)
     assert out["total"] == 3
     assert [v["id_variable"] for v in out["variables"]] == [1, 2, 3]
     assert "truncado" not in out
@@ -145,29 +153,6 @@ def test_indec_buscar():
     assert out["series"][0]["id"] == "148.3_INIVELNAL_DICI_M_26"
 
 
-# ── AFIP ──────────────────────────────────────────────────────────────────────
-def test_afip_cuit_validation_local():
-    # 33-69345023-9 is AFIP's own CUIT (valid check digit).
-    assert afip.cuit_valido("33693450239")
-    assert not afip.cuit_valido("33693450230")
-    assert not afip.cuit_valido("123")
-
-
-def test_afip_bad_length_no_network():
-    out = afip.padron("123", user_agent=UA)
-    assert out["available"] is False
-    assert "11 digitos" in out["error"]
-
-
-def test_afip_padron_service_down_is_structured():
-    with respx.mock(assert_all_called=False) as rsx:
-        rsx.get(url__regex=r"soa\.afip\.gob\.ar").mock(return_value=httpx.Response(404, text="Not Found"))
-        out = afip.padron("33693450239", user_agent=UA, timeout=0.5)
-    assert out["available"] is False
-    assert out["cuit_valido"] is True
-    assert out["nota"]
-
-
 # ── Boletín ─────────────────────────────────────────────────────────────────--
 def test_boletin_caba():
     payload = [{"superseccion_id": 1, "nombre": "Normas", "descripcion": "Normas del boletín",
@@ -209,10 +194,10 @@ def test_tributaria_filters_tax_norms(tmp_path):
     db = tmp_path / "infoleg.sqlite"
     build_dataset_from_csv(csv_path, db)
     store = DatasetStore(db)
-    # "emergencia economica" (Decreto 99999) mentions 'economia' -> tax keyword.
+    # "emergencia economica" (Decreto 99999) solo menciona economia: no es tributaria.
     out = tributaria.buscar(store, query="emergencia economica")
     ids = {i["id"] for i in out["items"]}
-    assert 99999 in ids
+    assert 99999 not in ids
 
 
 def test_tributaria_no_dataset(tmp_path):

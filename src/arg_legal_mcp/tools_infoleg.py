@@ -1,12 +1,18 @@
-"""Registration of the InfoLEG MCP tools, resource and helpers.
+"""Registration of the InfoLEG MCP tools and resource.
 
-Docstrings follow a deliberate style (CUANDO USARLA / NO CONFUNDIR / restrictions /
-documented operators) so the agent picks the right tool and arguments.
+Docstrings follow a deliberate style (CUANDO USARLA / NO CONFUNDIR / restricciones /
+operadores documentados) so the agent picks the right tool and arguments. Every input
+is validated/clamped here (lengths, ids, pages, ISO dates) before reaching the service.
+
+All tools are read-only. Dataset maintenance (download + rebuild) is NOT exposed over
+MCP: it runs only from the CLI (``python -m arg_legal_mcp build-dataset``) and the
+systemd timer.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from .disclaimer import with_disclaimer
 from .infoleg.models import ModoVinculo, TipoTexto
@@ -15,77 +21,146 @@ from .infoleg.services import InfoLegService
 try:  # tool annotations are best-effort; older SDKs may lack the type
     from mcp.types import ToolAnnotations
 
-    _RO = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
-    _WRITE = ToolAnnotations(readOnlyHint=False, openWorldHint=True)
+    _RO = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=True)
 except Exception:  # pragma: no cover
     _RO = None
-    _WRITE = None
+
+MAX_TEXTO = 300
+MAX_PAGINA = 1000
+MAX_ID = 99_999_999
 
 
-def _err(value_error: Exception) -> dict:
-    return {"error": str(value_error)}
+class ParametroInvalido(ValueError):
+    pass
 
 
-def register_infoleg(mcp, service: InfoLegService, catalogs, *, health=None) -> None:
+def _err(exc: Exception) -> dict:
+    return {"error": str(exc)}
+
+
+def validar_texto(valor: str | None, campo: str, max_len: int = MAX_TEXTO) -> str | None:
+    if valor is None:
+        return None
+    valor = " ".join(str(valor).split())
+    if len(valor) > max_len:
+        raise ParametroInvalido(f"'{campo}' es demasiado largo (maximo {max_len} caracteres).")
+    return valor or None
+
+
+def validar_fecha(valor: str | None, campo: str) -> str | None:
+    if valor is None or not str(valor).strip():
+        return None
+    raw = str(valor).strip()
+    try:
+        if len(raw) != 10:
+            raise ValueError
+        return date.fromisoformat(raw).isoformat()
+    except ValueError:
+        raise ParametroInvalido(
+            f"'{campo}' debe ser una fecha ISO 'YYYY-MM-DD' (ej: 2024-01-31); recibido {raw[:20]!r}."
+        ) from None
+
+
+def validar_id(valor: int) -> int:
+    if not isinstance(valor, int) or not (1 <= valor <= MAX_ID):
+        raise ParametroInvalido("'id' debe ser el id numerico de InfoLEG (entero positivo).")
+    return valor
+
+
+def clamp_pagina(nro_pag: int | None) -> int:
+    try:
+        n = int(nro_pag or 1)
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(n, MAX_PAGINA))
+
+
+def _numero(valor: int | str | None) -> str | None:
+    if valor is None or str(valor).strip() == "":
+        return None
+    raw = str(valor).strip().replace(".", "")
+    if not raw.isdigit() or len(raw) > 9:
+        raise ParametroInvalido("'numero' debe ser el numero de la norma, sin puntos (ej: 27275).")
+    return str(int(raw))
+
+
+def register_infoleg(mcp, service: InfoLegService, catalogs) -> None:
     ro = {"annotations": _RO} if _RO else {}
-    write = {"annotations": _WRITE} if _WRITE else {}
 
     # ── Resource: catalogo de tipos de norma ─────────────────────────────────
     @mcp.resource("infoleg://tipos-norma")
     def tipos_norma_resource() -> str:
-        """Catalogo de tipos de norma (id + nombre).
+        """Catalogo de TODOS los tipos de norma del dataset (nombre + cantidad).
 
-        Consultalo ANTES de usar `tipo_norma` en infoleg_buscar_normas (ej: 1=Ley,
-        2=Decreto). Devuelve JSON."""
+        Usa el `nombre` en el parametro `tipo_norma` de infoleg_buscar_normas (ej:
+        'Ley', 'Decreto', 'Resolución', 'Comunicación', 'Decreto/Ley', 'Acordada').
+        `id_infoleg` (cuando existe) es el id del buscador en vivo. Devuelve JSON."""
         return json.dumps(catalogs.tipos, ensure_ascii=False, indent=2)
 
     # ── Búsqueda ──────────────────────────────────────────────────────────---
     @mcp.tool(**ro)
     def infoleg_buscar_normas(
         texto: str | None = None,
-        tipo_norma: int | None = None,
-        numero: int | None = None,
+        tipo_norma: str | None = None,
+        numero: str | None = None,
         anio_sancion: int | None = None,
-        dependencia: int | None = None,
+        organismo: str | None = None,
         publicado_desde: str | None = None,
         publicado_hasta: str | None = None,
+        orden: str = "relevancia",
         en_vivo: bool = False,
         nro_pag: int = 1,
     ) -> dict:
-        """Busca normas nacionales (Leyes, Decretos, Resoluciones, Disposiciones...).
+        """Busca normas nacionales argentinas (leyes, decretos, DNU, resoluciones,
+        disposiciones, comunicaciones, etc.) en InfoLEG.
 
-        CUANDO USARLA: cuando NO conoces el id de la norma. Si ya tenes el id, usa
-        infoleg_ver_norma. Resultados ordenados por recencia.
+        CUANDO USARLA: cuando NO conoces el id de la norma, o para ubicar una norma por
+        su referencia ("Ley 20628", "Decreto 70/2023", "DNU 70/2023": van primero).
+        Si ya tenes el id, usa infoleg_ver_norma.
 
-        MODO: por defecto consulta el DATASET offline (robusto). Con en_vivo=true usa
-        el buscador real de InfoLEG (operadores nativos, datos frescos); si el vivo
-        falla, degrada al dataset y lo avisa en el campo `aviso`.
+        ORDEN: por defecto 'relevancia' (prioriza coincidencia en el titulo, normas base
+        muy modificadas -p. ej. la Ley 20.628 para 'impuesto a las ganancias'- y leyes
+        sobre resoluciones). orden='recientes' ordena por fecha de publicacion.
 
-        RESTRICCIONES:
-        - Se requieren >= 2 parametros, EXCEPTO si usas `texto` (puede ir solo).
-        - Para Leyes (tipo_norma=1) NO indiques anio_sancion.
-        - Numeros SIN puntos: 27275, no 27.275.
+        MODO: por defecto consulta el DATASET offline (rapido, robusto). en_vivo=true usa
+        el buscador real de InfoLEG (mas fresco; exige >= 2 filtros si no hay texto y no
+        admite anio_sancion para Leyes); si falla, degrada al dataset y lo dice en `aviso`.
 
         PARAMETROS:
-        - texto: palabras clave. Operadores: Y/AND, O/OR, NO/NOT, +obligatoria,
-          -excluir, "frase exacta", comodin * (prefijo). Ej: 'residu*',
-          '"transporte de carga"', 'exporta* AND bienes'.
-        - tipo_norma: id del tipo (ver recurso infoleg://tipos-norma).
-        - numero / anio_sancion: numero de norma y anio (4 digitos).
-        - dependencia: id del organismo (usa infoleg_buscar_dependencias para hallarlo).
-        - publicado_desde / publicado_hasta: rango de PUBLICACION en Boletin, ISO
-          'YYYY-MM-DD'. (Ojo: publicacion, no sancion.)
-        - en_vivo: true para el buscador real de InfoLEG.
-        - nro_pag: pagina virtual (paginacion del MCP). Repeti con nro_pag=2,3...
+        - texto: palabras clave (max 300). Operadores: Y/AND, O/OR, NO/NOT, -excluir,
+          "frase exacta", prefijo* (ej: 'residu*'). Singular/plural se toleran.
+        - tipo_norma: nombre del tipo ('Ley', 'Decreto', 'Resolución', 'Disposición',
+          'Decisión Administrativa', 'Comunicación', 'Decreto/Ley', 'Acordada'...; ver
+          recurso infoleg://tipos-norma). 'DNU' se busca como 'Decreto'.
+        - numero: numero de la norma SIN puntos (27275, no 27.275).
+        - anio_sancion: anio de sancion (4 digitos).
+        - organismo: organismo emisor (nombre o sigla: 'AFIP', 'BCRA', 'Ministerio de
+          Salud'). Para el nombre exacto usa infoleg_buscar_organismos.
+        - publicado_desde / publicado_hasta: fechas ISO 'YYYY-MM-DD' de PUBLICACION en el
+          Boletin Oficial. Las ~7.000 normas antiguas sin fecha de publicacion se
+          filtran por su fecha de sancion (no quedan excluidas).
+        - nro_pag: pagina (5 resultados por pagina). Repeti con nro_pag=2, 3...
 
-        DEVUELVE: resultados + pagina_actual + total_pags + total_resultados + fuente.
+        DEVUELVE: resultados (id, identidad_norma, organismo, fechas, tema, sumario,
+        cantidad_normas_que_la_modifican) + pagina_actual + total_pags +
+        total_resultados + fuente (+ aviso si hubo degradacion).
         """
         try:
+            texto = validar_texto(texto, "texto")
+            tipo = validar_texto(tipo_norma, "tipo_norma", 60)
+            org = validar_texto(organismo, "organismo", 150)
+            desde = validar_fecha(publicado_desde, "publicado_desde")
+            hasta = validar_fecha(publicado_hasta, "publicado_hasta")
+            if desde and hasta and desde > hasta:
+                raise ParametroInvalido("publicado_desde es posterior a publicado_hasta.")
+            if anio_sancion is not None and not (1800 <= anio_sancion <= 2100):
+                raise ParametroInvalido("anio_sancion debe tener 4 digitos (ej: 2016).")
             data = service.buscar_normas(
-                texto=texto, tipo_norma=tipo_norma, numero=numero,
-                anio_sancion=anio_sancion, dependencia=dependencia,
-                publicado_desde=publicado_desde, publicado_hasta=publicado_hasta,
-                en_vivo=en_vivo, nro_pag=nro_pag,
+                texto=texto, tipo_norma=tipo, numero=_numero(numero),
+                anio_sancion=anio_sancion, organismo=org,
+                publicado_desde=desde, publicado_hasta=hasta,
+                orden=(orden or "relevancia").strip().lower(),
+                en_vivo=bool(en_vivo), nro_pag=clamp_pagina(nro_pag),
             )
         except ValueError as exc:
             return _err(exc)
@@ -94,55 +169,57 @@ def register_infoleg(mcp, service: InfoLegService, catalogs, *, health=None) -> 
     # ── Ficha ────────────────────────────────────────────────────────────────
     @mcp.tool(**ro)
     def infoleg_ver_norma(id: int) -> dict:
-        """Metadatos completos de una norma por su id de InfoLEG.
+        """Ficha completa de una norma por su id de InfoLEG: identidad, organismo,
+        fechas de sancion y publicacion, resumen, observaciones, URLs oficiales del texto
+        original y actualizado, y cantidad de normas que modifica / que la modifican.
 
-        CUANDO USARLA: cuando ya tenes el id (de infoleg_buscar_normas o
-        infoleg_resolver_id). Incluye urls de texto, fechas y conteo de vinculos.
+        CUANDO USARLA: cuando ya tenes el id (de infoleg_buscar_normas o search). Para
+        leer el articulado usa infoleg_obtener_texto_actualizado.
         """
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
         return with_disclaimer(service.ver_norma(id))
-
-    @mcp.tool(**ro)
-    def infoleg_resolver_id(tipo: str, numero: int) -> dict:
-        """Resuelve "tipo + numero" (ej: 'Ley' 27275) a su id_norma usando el dataset.
-
-        CUANDO USARLA: para convertir una referencia humana ('Ley 27275') en el id
-        numerico que usan las demas tools. Devuelve {id_norma} o un error si no existe.
-        """
-        rid = service.dataset.resolve_id(tipo, numero)
-        if rid is None:
-            return {"error": f"No se encontro {tipo} {numero} en el dataset offline.",
-                    "sugerencia": "Proba infoleg_buscar_normas con en_vivo=true."}
-        return with_disclaimer({"id_norma": rid, "tipo": tipo, "numero": numero})
 
     # ── Texto ────────────────────────────────────────────────────────────────
     @mcp.tool(**ro)
     def infoleg_obtener_texto_actualizado(
         id: int, inicio: int = 0, fin: int | None = None
     ) -> dict:
-        """Texto VIGENTE de una norma (con modificaciones aplicadas), paginado.
+        """Texto VIGENTE (consolidado, con las modificaciones aplicadas) de una norma.
 
-        CUANDO USARLA: para conocer la ley tal cual rige hoy. Si no hay version
-        actualizada, devuelve la ORIGINAL avisando. Lee la URL REAL de la ficha o el
-        dataset (nunca calcula la carpeta de anexos).
+        CUANDO USARLA: para leer la norma tal como rige segun InfoLEG. Si InfoLEG no
+        tiene version consolidada, devuelve el ORIGINAL y lo avisa en `aviso` (en ese caso
+        revisa infoleg_ver_normas_que_la_modifican: puede haber cambios no consolidados).
 
-        PAGINACION: por defecto fragmentos grandes. Usa inicio/fin (o el campo
-        `siguiente_inicio`) para seguir leyendo.
+        PAGINACION: fragmentos de ~8.000 caracteres. Si `hay_mas` es true, volve a llamar
+        con inicio=`siguiente_inicio`. `fin` opcional (maximo 40.000 caracteres por pedido).
         """
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
         return with_disclaimer(
-            service.obtener_texto(id, TipoTexto.ACTUALIZADO, inicio, fin)
+            service.obtener_texto(id, TipoTexto.ACTUALIZADO, max(0, inicio or 0), fin)
         )
 
     @mcp.tool(**ro)
     def infoleg_obtener_texto_original(
         id: int, inicio: int = 0, fin: int | None = None
     ) -> dict:
-        """Texto ORIGINAL de una norma, tal como fue sancionada (paginado).
+        """Texto ORIGINAL de una norma, tal como fue publicada (sin modificaciones).
 
-        CUANDO USARLA: investigacion historica / redaccion inicial. NO refleja
-        necesariamente lo vigente (para eso usa infoleg_obtener_texto_actualizado).
+        CUANDO USARLA: investigacion historica o para ver la redaccion inicial. NO refleja
+        lo vigente (para eso, infoleg_obtener_texto_actualizado). Misma paginacion:
+        inicio=`siguiente_inicio` mientras `hay_mas` sea true.
         """
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
         return with_disclaimer(
-            service.obtener_texto(id, TipoTexto.ORIGINAL, inicio, fin)
+            service.obtener_texto(id, TipoTexto.ORIGINAL, max(0, inicio or 0), fin)
         )
 
     # ── Vínculos ─────────────────────────────────────────────────────────────
@@ -151,79 +228,64 @@ def register_infoleg(mcp, service: InfoLegService, catalogs, *, health=None) -> 
         """Normas que ESTA norma modifica, deroga o complementa (direccion ACTIVA).
 
         CUANDO USARLA: para rastrear el impacto de una norma sobre normas anteriores.
-        NO CONFUNDIR con infoleg_ver_normas_que_la_modifican (la inversa).
+        NO CONFUNDIR con infoleg_ver_normas_que_la_modifican (la inversa). Consulta
+        InfoLEG en vivo; si no responde, la lista viene VACIA con un `aviso` y la
+        cantidad segun el dataset: en ese caso la lista vacia NO significa "ninguna".
         """
-        return with_disclaimer(service.ver_vinculos(id, ModoVinculo.MODIFICA_A, nro_pag))
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
+        return with_disclaimer(
+            service.ver_vinculos(id, ModoVinculo.MODIFICA_A, clamp_pagina(nro_pag))
+        )
 
     @mcp.tool(**ro)
     def infoleg_ver_normas_que_la_modifican(id: int, nro_pag: int = 1) -> dict:
-        """Normas que modificaron/derogaron/complementaron a ESTA (direccion PASIVA).
+        """Normas que modificaron, derogaron o complementaron a ESTA (direccion PASIVA).
 
-        CUANDO USARLA: para saber si una norma sigue vigente o fue alterada.
-        NO CONFUNDIR con infoleg_ver_normas_que_modifica (la inversa).
+        CUANDO USARLA: para saber si una norma fue alterada o derogada (vigencia).
+        NO CONFUNDIR con infoleg_ver_normas_que_modifica (la inversa). Consulta InfoLEG en
+        vivo; si no responde, la lista viene VACIA con un `aviso`: NO concluyas que nadie
+        la modifico. Paginado (nro_pag).
         """
-        return with_disclaimer(service.ver_vinculos(id, ModoVinculo.MODIFICADA_POR, nro_pag))
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
+        return with_disclaimer(
+            service.ver_vinculos(id, ModoVinculo.MODIFICADA_POR, clamp_pagina(nro_pag))
+        )
 
     # ── Diff ─────────────────────────────────────────────────────────────────
     @mcp.tool(**ro)
     def infoleg_comparar_original_actualizado(id: int) -> dict:
-        """Comparacion MECANICA (no vinculante) entre el texto original y el actualizado.
+        """Comparacion MECANICA (diff de lineas, no vinculante) entre el texto original y
+        el actualizado de una norma.
 
-        CUANDO USARLA: para ver, a grandes rasgos, que cambio entre la sancion y la
-        version vigente. Es un insumo: la conclusion juridica requiere leer los textos.
+        CUANDO USARLA: para ver a grandes rasgos que cambio entre la publicacion y la
+        version consolidada. Es un insumo: la conclusion juridica requiere leer los textos.
         """
+        try:
+            validar_id(id)
+        except ValueError as exc:
+            return _err(exc)
         return with_disclaimer(service.comparar_textos(id))
 
-    # ── Dependencias ─────────────────────────────────────────────────────────
+    # ── Organismos ───────────────────────────────────────────────────────────
     @mcp.tool(**ro)
-    def infoleg_buscar_dependencias(query: str, limit: int = 10) -> dict:
-        """Busca organismos/dependencias por nombre (fuzzy, tolerante a tildes/typos).
+    def infoleg_buscar_organismos(query: str, limit: int = 10) -> dict:
+        """Busca organismos emisores por nombre o sigla (tolerante a tildes y typos) y
+        devuelve el nombre EXACTO con que InfoLEG los registra + cantidad de normas.
 
-        CUANDO USARLA: ANTES de filtrar infoleg_buscar_normas por `dependencia`, para
-        obtener el id del organismo. Ej: 'ministerio de salud', 'AFIP', 'ANSES'.
+        CUANDO USARLA: antes de filtrar infoleg_buscar_normas por `organismo` si no sabes
+        como lo nombra InfoLEG. Ej: 'AFIP', 'ministerio de salud', 'ANSES', 'BCRA'.
         """
-        return {"resultados": catalogs.buscar_dependencias(query, limit)}
-
-    @mcp.tool(**ro)
-    def infoleg_get_dependencia_by_id(id: int) -> dict:
-        """Datos de una dependencia por su id exacto. Si no sabes el id, usa
-        infoleg_buscar_dependencias."""
-        dep = catalogs.get_dependencia_by_id(id)
-        return dep or {"error": f"No existe dependencia con id {id}."}
-
-    # ── Dataset ──────────────────────────────────────────────────────────────
-    @mcp.tool(**ro)
-    def infoleg_estado_dataset() -> dict:
-        """Estado del dataset offline de InfoLEG (disponibilidad y cantidad de normas)."""
-        disponible = service.dataset.available()
-        return {
-            "disponible": disponible,
-            "cantidad_normas": service.dataset.count() if disponible else 0,
-            "ruta": service.dataset.db_path,
-            "fecha_construccion": service.dataset.get_meta("built_at") if disponible else None,
-        }
-
-    @mcp.tool(**write)
-    def infoleg_actualizar_dataset(confirmar: bool = False) -> dict:
-        """Descarga el ZIP oficial (datos.jus.gob.ar) y reconstruye el dataset SQLite.
-
-        OPERACION PESADA y de RED (cientos de MB, varios minutos). Requiere
-        confirmar=true para ejecutarse. Bloquea hasta terminar.
-        """
-        if not confirmar:
-            return {"aviso": "Operacion pesada. Volve a llamar con confirmar=true para descargar "
-                             "y reconstruir el dataset desde datos.jus.gob.ar."}
-        from .infoleg.dataset import download_and_build
-
         try:
-            count = download_and_build(service.dataset.db_path, user_agent=service.s.user_agent)
-        except Exception as exc:  # noqa: BLE001
-            if health is not None:
-                health.record_freshness("infoleg_dataset", healthy=False, error=str(exc))
-            return {"ok": False, "error": f"No se pudo construir el dataset: {exc}"}
-        if health is not None:
-            health.record_freshness(
-                "infoleg_dataset", healthy=True,
-                last_data_date=service.dataset.get_meta("built_at"),
-            )
-        return {"ok": True, "cantidad_normas": count, "ruta": service.dataset.db_path}
+            q = validar_texto(query, "query", 150)
+        except ValueError as exc:
+            return _err(exc)
+        if not q:
+            return {"error": "Indica 'query' (nombre o sigla del organismo)."}
+        limit = max(1, min(int(limit or 10), 50))
+        return {"resultados": catalogs.buscar_organismos(q, limit)}

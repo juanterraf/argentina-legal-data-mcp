@@ -1,8 +1,11 @@
 """Parsers for the real InfoLEG HTML.
 
 InfoLEG returns hand-rolled HTML (tables, named spans). These parsers target the
-known structure but degrade gracefully: a missing field yields ``None``/empty
-rather than an exception, so a partial layout change does not take down search.
+known structure. A missing optional field yields ``None``; but when the page does not
+look like what we expect at all (layout change, error page, captcha), they raise
+``ParseAnomalyError`` instead of returning an empty result: in a legal context an
+empty "no results" / "nobody modifies it" that is actually a parsing failure is a
+false answer. The service layer never caches anomalies and degrades to the dataset.
 """
 
 from __future__ import annotations
@@ -33,6 +36,10 @@ MESES = {
 
 class NormaNotFoundError(Exception):
     """The requested norma is not registered in InfoLEG."""
+
+
+class ParseAnomalyError(Exception):
+    """The live HTML does not match the known InfoLEG layout (do not trust/cache it)."""
 
 
 class SearchQueryMaximumExceeded(Exception):
@@ -89,11 +96,13 @@ def extract_id(source: str | None) -> int | None:
 
 # ── Búsquedas (buscarNormas.do) ───────────────────────────────────────────────
 class InfoLegBusquedasParser:
-    def _total_y_pagina(self, html: str) -> tuple[int, int]:
-        m = re.search(r"Cantidad de Normas Encontradas:\s*(\d+)[\s\S]*?en\s*(\d+)", html)
+    _TOTAL_RE = re.compile(r"Cantidad de Normas Encontradas:\s*(\d+)(?:[\s\S]*?en\s*(\d+))?")
+
+    def _total_y_pagina(self, html: str) -> tuple[int, int] | None:
+        m = self._TOTAL_RE.search(html)
         if not m:
-            return 0, 1
-        return int(m.group(1)), int(m.group(2))
+            return None
+        return int(m.group(1)), int(m.group(2) or 1)
 
     def _es_fila_datos(self, tds: list[Tag]) -> bool:
         if len(tds) < 3:
@@ -134,12 +143,17 @@ class InfoLegBusquedasParser:
         }
 
     def parse(self, html: str) -> BusquedaNormaResponse:
-        total, total_pags = self._total_y_pagina(html)
+        conteo = self._total_y_pagina(html)
         soup = _soup(html)
         caja = soup.find("div", id="resultados_caja")
         tabla = caja.find("table") if caja else None
         if tabla is None:
-            return BusquedaNormaResponse(resultados=[], total_pags=total_pags, total=total)
+            if conteo is not None and conteo[0] == 0:
+                return BusquedaNormaResponse(resultados=[], total_pags=1, total=0)
+            raise ParseAnomalyError(
+                "La pagina de resultados de InfoLEG no tiene la estructura esperada."
+            )
+        total, total_pags = conteo if conteo is not None else (0, 1)
 
         resultados: list[NormaSummary] = []
         for tr in tabla.find_all("tr"):
@@ -153,6 +167,12 @@ class InfoLegBusquedasParser:
             datos_tema = self._parse_td_tema(tds[2])
             resultados.append(NormaSummary(**datos_norma, **datos_boletin, **datos_tema))
 
+        if not resultados and (total > 0 or tabla.find("a", href=re.compile(r"verNorma"))):
+            raise ParseAnomalyError(
+                "InfoLEG informa resultados pero no se pudo leer ninguno (cambio de formato)."
+            )
+        if conteo is None and resultados:
+            total = len(resultados)
         return BusquedaNormaResponse(resultados=resultados, total_pags=total_pags, total=total)
 
 
@@ -169,13 +189,15 @@ class InfoLegNormaParser:
 
         textos = soup.find("div", id="Textos_Completos")
         if textos is None:
-            # No structured ficha — return a minimal summary rather than crash.
-            return VerNormaResponse(summary=NormaSummary(id=self.norma_id))
+            raise ParseAnomalyError("La ficha de InfoLEG no tiene la estructura esperada.")
 
         identidad, organismo_emisor = self._identidad(textos)
         id_boletin, fecha_pub, pagina = self._boletin(textos)
         url_completo, url_actualizado = self._urls(textos)
         modifica, modifican = self._vinculos_counts(textos)
+        tema = self._first_text(textos, "h1")
+        if not identidad and not tema and fecha_pub is None and not (url_completo or url_actualizado):
+            raise ParseAnomalyError("Ficha de InfoLEG vacia o irreconocible.")
 
         return VerNormaResponse(
             summary=NormaSummary(
@@ -185,7 +207,7 @@ class InfoLegNormaParser:
                 id_boletin=id_boletin,
                 fecha_publicacion=fecha_pub,
                 organismo_padre=self._first_text(textos, "span", "destacado"),
-                tema=self._first_text(textos, "h1"),
+                tema=tema,
                 sumario=self._sumario(textos),
             ),
             fecha_emision=self._fecha_emision(textos),
@@ -275,6 +297,14 @@ class VerVinculosParser:
                 i += 3
             else:
                 i += 1
+        if not vinculos:
+            # Links to other norms but nothing parsed => the layout changed.
+            links = [a for a in self._soup.find_all("a", href=True)
+                     if "verNorma" in a["href"] and extract_id(a["href"]) not in (None, self._id)]
+            if links:
+                raise ParseAnomalyError(
+                    "La pagina de vinculos de InfoLEG tiene normas pero no se pudieron leer."
+                )
         return VerVinculosResponse(id=self._id, modo=self._modo, vinculos=vinculos)
 
     def _parse_norma(self, celda_norma: Tag, celda_fecha: Tag, celda_desc: Tag):

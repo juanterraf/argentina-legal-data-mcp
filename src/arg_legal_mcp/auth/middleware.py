@@ -1,23 +1,36 @@
 """Pure-ASGI auth middleware for the MCP HTTP transports.
 
-Discovery JSON-RPC methods (initialize, *_/list, ping, notifications/*) pass WITHOUT
-auth so a client can connect and enumerate capabilities. Execution methods
-(tools/call, resources/read, prompts/get) require a valid Bearer credential.
+Only discovery JSON-RPC methods (initialize, ping, notifications/*, tools|resources|
+prompts listing) pass WITHOUT auth, so a client can connect and enumerate capabilities.
+Everything else -tools/call, resources/read, prompts/get, resources/subscribe,
+logging/setLevel, completion/complete, any future method, client responses and bodies
+we cannot parse- requires a valid Bearer credential (allowlist, not denylist).
 
 Implemented at the ASGI layer (not Starlette ``BaseHTTPMiddleware``) so the request
-body is buffered once and *replayed* to the inner MCP app — avoiding the classic
-"body already consumed" problem.
+body is buffered once (with a size cap) and *replayed* to the inner MCP app. All
+per-request state lives in local variables (the middleware instance is shared by
+concurrent requests). Tool-call logging is done at the tool layer (see
+``tools_common.instrument_tools``), so it also works with auth disabled.
 """
 
 from __future__ import annotations
 
 import json
-import time
 
 from .api_keys import ApiKeyStore
 
-# Methods that mutate/execute — these require a credential.
-PROTECTED_METHODS = {"tools/call", "resources/read", "prompts/get"}
+# Methods that are safe to serve without a credential (discovery / lifecycle).
+OPEN_METHODS = frozenset({
+    "initialize",
+    "ping",
+    "tools/list",
+    "resources/list",
+    "resources/templates/list",
+    "prompts/list",
+})
+OPEN_PREFIXES = ("notifications/",)
+
+DEFAULT_MAX_BODY = 1_048_576  # 1 MiB
 
 
 def _bearer_from_scope(scope) -> str | None:
@@ -30,99 +43,73 @@ def _bearer_from_scope(scope) -> str | None:
     return None
 
 
-def _methods_in_body(body: bytes) -> list[str]:
+def _parse(body: bytes):
     try:
-        data = json.loads(body or b"{}")
-    except json.JSONDecodeError:
-        return []
+        return json.loads(body or b"null")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def _methods(data) -> list[str] | None:
+    """JSON-RPC methods in the body; None if the body is not a JSON-RPC message."""
     if isinstance(data, list):  # JSON-RPC batch
-        return [d.get("method", "") for d in data if isinstance(d, dict)]
+        if not data or not all(isinstance(d, dict) for d in data):
+            return None
+        return [str(d.get("method") or "") for d in data]
     if isinstance(data, dict):
-        return [data.get("method", "")]
-    return []
-
-
-def _tool_name(body: bytes) -> str | None:
-    try:
-        data = json.loads(body or b"{}")
-        if isinstance(data, dict):
-            return (data.get("params") or {}).get("name")
-    except (json.JSONDecodeError, AttributeError):
-        pass
+        return [str(data.get("method") or "")]
     return None
 
 
-def _rpc_id(body: bytes):
-    try:
-        data = json.loads(body or b"{}")
-        if isinstance(data, dict):
-            return data.get("id")
-    except json.JSONDecodeError:
-        pass
-    return None
+def _is_open(method: str) -> bool:
+    return method in OPEN_METHODS or method.startswith(OPEN_PREFIXES)
+
+
+def _rpc_id(data):
+    return data.get("id") if isinstance(data, dict) else None
 
 
 class AuthASGIMiddleware:
-    def __init__(self, app, store: ApiKeyStore, *, jwt_audience: str | None = None, health=None):
+    def __init__(self, app, store: ApiKeyStore, *, max_body_bytes: int = DEFAULT_MAX_BODY,
+                 health=None):
         self.app = app
         self.store = store
-        self.jwt_audience = jwt_audience
-        self.health = health  # optional HealthStore for request_log
+        self.max_body_bytes = max_body_bytes
+        self.health = health  # kept for signature compatibility (logging moved to tools)
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http" or scope.get("method") != "POST":
             return await self.app(scope, receive, send)
 
-        # Buffer the full request body so we can both inspect and replay it.
-        messages = []
+        # Buffer the full request body (capped) so we can both inspect and replay it.
+        messages: list[dict] = []
         body = b""
         while True:
             message = await receive()
             messages.append(message)
             if message["type"] == "http.request":
                 body += message.get("body", b"")
+                if len(body) > self.max_body_bytes:
+                    return await self._reply(send, 413, "Request body too large", None)
                 if not message.get("more_body", False):
                     break
-            else:
+            else:  # http.disconnect
                 break
 
-        methods = _methods_in_body(body)
-        needs_auth = any(m in PROTECTED_METHODS for m in methods)
-
+        data = _parse(body)
+        methods = _methods(data)
+        needs_auth = methods is None or not all(_is_open(m) for m in methods)
         if needs_auth and not self._authorized(scope):
-            return await self._deny(send, _rpc_id(body))
+            return await self._reply(send, 401, "Authentication required", _rpc_id(data))
 
-        if self.health is not None and "tools/call" in methods:
-            self._log_start = time.time()
-            tool = _tool_name(body)
-        else:
-            tool = None
+        pending = list(messages)  # per-request replay buffer
 
-        # Replay buffered messages, then defer to the live receive channel.
         async def replay():
-            if messages:
-                return messages.pop(0)
+            if pending:
+                return pending.pop(0)
             return await receive()
 
-        if tool is None:
-            return await self.app(scope, replay, send)
-
-        # Wrap send to capture status for the request log.
-        status_holder = {"status": 200}
-
-        async def logging_send(event):
-            if event["type"] == "http.response.start":
-                status_holder["status"] = event["status"]
-            await send(event)
-
-        try:
-            await self.app(scope, replay, logging_send)
-        finally:
-            ms = int((time.time() - self._log_start) * 1000)
-            try:
-                self.health.log_request(tool, status_holder["status"] < 400, ms)
-            except Exception:  # never let logging break a request
-                pass
+        return await self.app(scope, replay, send)
 
     def _authorized(self, scope) -> bool:
         token = _bearer_from_scope(scope)
@@ -130,22 +117,17 @@ class AuthASGIMiddleware:
             return False
         return self.store.validate(token)
 
-    async def _deny(self, send, rpc_id):
+    @staticmethod
+    async def _reply(send, status: int, message: str, rpc_id):
         payload = json.dumps(
             {
                 "jsonrpc": "2.0",
-                "error": {"code": -32001, "message": "Authentication required"},
+                "error": {"code": -32001 if status == 401 else -32600, "message": message},
                 "id": rpc_id,
             }
         ).encode()
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 401,
-                "headers": [
-                    (b"content-type", b"application/json"),
-                    (b"www-authenticate", b'Bearer realm="argentina-legal-data-mcp"'),
-                ],
-            }
-        )
+        headers = [(b"content-type", b"application/json")]
+        if status == 401:
+            headers.append((b"www-authenticate", b'Bearer realm="argentina-legal-data-mcp"'))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": payload})

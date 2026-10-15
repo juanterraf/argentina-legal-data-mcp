@@ -1,5 +1,5 @@
 [Unit]
-Description=Rebuild the InfoLEG offline dataset from the official ZIP
+Description=Rebuild the InfoLEG offline dataset from the official ZIP (~49 MB)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,43 @@ Type=oneshot
 User=argmcp
 Group=argmcp
 WorkingDirectory=/opt/argentina-legal-data-mcp
-Environment=ARGMCP_DATA_DIR=/opt/argentina-legal-data-mcp/data
-Environment=ARGMCP_DATASET_PATH=/var/lib/argentina-legal-data-mcp/infoleg.sqlite
+# Same .env as the server, so both use the SAME dataset path
+# (/opt/argentina-legal-data-mcp/data/infoleg.sqlite in production). The rebuild is
+# atomic (temp file + rename in the data dir) and locked; the running server picks up
+# the new file without a restart. Exit code 3 = another rebuild was already running.
+EnvironmentFile=-/opt/argentina-legal-data-mcp/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/argentina-legal-data-mcp/.venv/bin/python -m arg_legal_mcp build-dataset
+SuccessExitStatus=3
 TimeoutStartSec=3600
-ReadWritePaths=/var/lib/argentina-legal-data-mcp
+Nice=10
+IOSchedulingClass=idle
+UMask=0027
+
+# ── Hardening (aligned with argentina-legal-data-mcp.service) ───────────────────
+# Keep ReadWritePaths in sync with ARGMCP_DATA_DIR / ARGMCP_CACHE_DIR in .env.
+ReadWritePaths=/opt/argentina-legal-data-mcp/data /opt/argentina-legal-data-mcp/.cache
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged

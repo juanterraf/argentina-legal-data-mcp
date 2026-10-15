@@ -21,17 +21,31 @@ from .infoleg.services import InfoLegService
 from .infoleg.session import SessionManager
 from .prompts import register_prompts
 from .sources.register import register_sources
-from .tools_common import register_common
+from .tools_common import instrument_tools, register_common
 from .tools_infoleg import register_infoleg
 from .tools_search_fetch import register_search_fetch
 
 SERVER_NAME = "Argentina Legal & Data MCP"
 INSTRUCTIONS = (
-    "Servidor MCP de datos publicos de Argentina, con foco profundo en legislacion "
-    "nacional (InfoLEG). Para legislacion: usa infoleg_buscar_normas (dataset por "
-    "defecto; en_vivo=true para el buscador real), infoleg_ver_norma, los textos "
-    "actualizado/original, y las tools de vinculos. La informacion proviene de fuentes "
-    "oficiales y NO constituye asesoramiento juridico."
+    "Servidor MCP de datos publicos oficiales de Argentina, con foco en legislacion "
+    "nacional. "
+    "LEGISLACION (InfoLEG): infoleg_buscar_normas (por relevancia; acepta referencias "
+    "como 'Ley 20628' o 'DNU 70/2023'), infoleg_ver_norma (ficha), "
+    "infoleg_obtener_texto_actualizado / _original (texto paginado), "
+    "infoleg_ver_normas_que_la_modifican / _que_modifica (vigencia; si avisan "
+    "degradacion, una lista vacia NO significa 'ninguna'), "
+    "infoleg_comparar_original_actualizado, infoleg_buscar_organismos y "
+    "tributaria_buscar. "
+    "BOLETIN OFICIAL de la Nacion (1ra seccion: normas y avisos; 3ra: contrataciones) "
+    "y de la Ciudad: boletin_oficial_sumario (dia), boletin_oficial_buscar (texto y "
+    "rango) y boletin_oficial_ver (texto completo). "
+    "CALCULOS: calcular_actualizacion (CER, UVA, ICL, IPC), calcular_plazo (dias "
+    "habiles con feriados nacionales), cuit_validar. "
+    "DATOS: dolar_cotizaciones, bcra_variables, bcra_cotizaciones, indec_buscar_series, "
+    "indec_serie, feriados_nacionales. data_health informa el estado de las fuentes. "
+    "Cita siempre la fuente y la fecha que devuelve cada tool. La informacion proviene "
+    "de fuentes oficiales y NO constituye asesoramiento juridico; los calculos son "
+    "orientativos."
 )
 
 
@@ -76,16 +90,14 @@ def build_service(settings: Settings | None = None, *, use_cache: bool = True) -
     settings = settings or get_settings()
     settings.ensure_dirs()
 
+    dataset = get_dataset(settings)
     catalogs = CatalogService(
         dependencias_path=settings.data_dir / "dependencias.json",
         tipos_path=settings.data_dir / "tipos_norma.json",
+        dataset=dataset,
     )
-    dataset = get_dataset(settings)
+    # The dataset's own status (count, build date) is read live by data_health.
     health = HealthStore(settings.data_dir / "health.sqlite")
-    if dataset.available():
-        health.record_freshness(
-            "infoleg_dataset", healthy=True, last_data_date=dataset.get_meta("built_at")
-        )
     cache = InfoLegCache(settings.cache_dir) if use_cache else None
     session_manager = SessionManager(
         user_agent=settings.user_agent,
@@ -124,9 +136,11 @@ def build_server(settings: Settings | None = None) -> tuple[FastMCP, ServiceCont
         port=settings.port,
         transport_security=_transport_security(settings),
     )
-    register_infoleg(mcp, container.infoleg, container.catalogs, health=container.health)
+    register_infoleg(mcp, container.infoleg, container.catalogs)
     register_common(mcp, health=container.health, dataset=container.dataset)
     register_search_fetch(mcp, container.infoleg)
     register_sources(mcp, settings, dataset=container.dataset)
     register_prompts(mcp)
+    # Last: every tool runs off the event loop and is logged (name/ms/ok, no arguments).
+    instrument_tools(mcp, container.health)
     return mcp, container

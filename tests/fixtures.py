@@ -102,7 +102,8 @@ _ROWS = [
         "texto_resumido": "informacion publica transparencia acceso",
         "observaciones": "", "texto_original": "<p>Articulo 1 - Derecho de acceso.</p>",
         "texto_actualizado": "<p>Articulo 1 - Derecho de acceso (consolidado).</p>",
-        "modificada_por": "300100", "modifica_a": "111 222",
+        # The official dataset stores COUNTS here (not ids).
+        "modificada_por": "121", "modifica_a": "2",
     },
     {
         "id_norma": "16986", "tipo_norma": "Ley", "numero_norma": "16986",
