@@ -74,13 +74,6 @@ lo escribís al asistente: él elige y encadena las herramientas solo.
 > Cubre 1ra y 3ra sección de la Nación y el Boletín de CABA. La 2da sección (sociedades) no
 > está: el `robots.txt` del sitio la excluye. No hay edición en fines de semana ni feriados.
 
-### 10. CUIT (`cuit_validar`)
-- *"¿Es **válido este CUIT**: 20-12345678-6? Verificá el dígito verificador."*
-- *"Normalizá estos CUIT a XX-XXXXXXXX-X y decime cuáles son de persona humana y cuáles jurídica."*
-
-> Es un cálculo local: **no** consulta a ARCA ni confirma que el CUIT exista, esté activo o a
-> quién pertenece (no devuelve razón social).
-
 ---
 
 ## 21 casos para abogados y relatores

@@ -40,7 +40,7 @@ INSTRUCTIONS = (
     "y de la Ciudad: boletin_oficial_sumario (dia), boletin_oficial_buscar (texto y "
     "rango) y boletin_oficial_ver (texto completo). "
     "CALCULOS: calcular_actualizacion (CER, UVA, ICL, IPC), calcular_plazo (dias "
-    "habiles con feriados nacionales), cuit_validar. "
+    "habiles con feriados nacionales). "
     "DATOS: dolar_cotizaciones, bcra_variables, bcra_cotizaciones, indec_buscar_series, "
     "indec_serie, feriados_nacionales. data_health informa el estado de las fuentes. "
     "Cita siempre la fuente y la fecha que devuelve cada tool. La informacion proviene "

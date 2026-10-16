@@ -140,7 +140,8 @@ def test_register_expone_tools_esperadas():
     register_sources(mcp, SimpleNamespace(user_agent=UA, http_timeout=5.0), dataset=object())
     nombres = {t.name for t in asyncio.run(mcp.list_tools())}
     esperadas = {"dolar_cotizaciones", "feriados_nacionales", "bcra_variables",
-                 "bcra_cotizaciones", "indec_serie", "indec_buscar_series", "cuit_validar",
+                 "bcra_cotizaciones", "indec_serie", "indec_buscar_series",
                  "calcular_actualizacion", "calcular_plazo", "tributaria_buscar"}
     assert esperadas <= nombres
     assert "afip_padron" not in nombres
+    assert "cuit_validar" not in nombres

@@ -6,7 +6,7 @@
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![MCP](https://img.shields.io/badge/MCP-streamable--http-7c3aed)
 ![Estado](https://img.shields.io/badge/estado-en%20vivo-brightgreen)
-![Tests](https://img.shields.io/badge/tests-158%20passing%20%2B%201%20skipped-success)
+![Tests](https://img.shields.io/badge/tests-155%20passing%20%2B%201%20skipped-success)
 [![por derechointeligente.com.ar](https://img.shields.io/badge/por-derechointeligente.com.ar-0b3d91)](https://derechointeligente.com.ar)
 
 > **Un asistente de IA con acceso a los datos públicos oficiales de Argentina.**
@@ -42,7 +42,7 @@ lenguaje natural — ella consulta la fuente sola y te responde con datos reales
 de una ley o una fecha) y **está desactualizado**. Este conector lo ancla a **datos
 oficiales verificables**.
 
-## Qué puede hacer — 24 herramientas
+## Qué puede hacer — 23 herramientas
 
 Todas son de **solo lectura**. Cada una muestra su límite principal, para que sepas qué esperar.
 
@@ -77,7 +77,6 @@ Recurso: catálogo de tipos de norma (`infoleg://tipos-norma`) · Prompts guiado
 |---|---|---|
 | `calcular_actualizacion` | Actualiza un monto entre dos fechas por **CER, UVA o ICL** (BCRA) o **IPC** nivel general nacional (INDEC). Devuelve coeficiente, monto, valor del índice en cada punta y fuente. | Orientativo: el índice aplicable depende del contrato o la sentencia. **No calcula intereses ni tasas.** |
 | `calcular_plazo` | Vencimiento de un plazo en días hábiles (hasta 365) o corridos (hasta 1.100). Descuenta fines de semana, feriados nacionales y feriados puente, y lista los días salteados. | **No contempla** feriados provinciales ni municipales, ferias judiciales, días inhábiles de cada tribunal ni plazo de gracia. |
-| `cuit_validar` | Valida un CUIT/CUIL/CDI: dígito verificador, formato canónico y tipo de persona (humana o jurídica). | Cálculo local: **no confirma** que el CUIT exista, esté activo ni a quién pertenece. |
 
 ### 💵 Datos económicos
 
@@ -115,7 +114,6 @@ Recurso: catálogo de tipos de norma (`infoleg://tipos-norma`) · Prompts guiado
   (INDEC), mostrando el valor de cada índice y su fuente.
 - **`calcular_plazo`.** Vencimientos en días hábiles con feriados nacionales, aclarando
   qué no contempla (ferias judiciales, feriados provinciales, días inhábiles de cada tribunal).
-- **`cuit_validar`.** Validación local de CUIT/CUIL/CDI.
 - **Mejor ranking.** "impuesto a las ganancias" trae primero la Ley 20.628: las normas base
   (muy modificadas) y las referencias directas ("Ley 20628") van primero.
 - **Respuestas más honestas.** Si InfoLEG cambia su formato o no responde, el servidor
@@ -163,7 +161,6 @@ Una vez conectado, le escribís esto tal cual a Claude/ChatGPT.
 
 ### Control de calidad / verificación (relatores, dictámenes)
 - *"Te paso las normas citadas en este proyecto: Ley 26.994, Ley 24.240, Ley 27.551, Decreto 70/2023. Para cada una: confirmá que **existe**, número correcto y si el artículo citado **sigue vigente** o fue sustituido. Marcá en rojo lo inexistente o desactualizado."*
-- *"¿Es válido este **CUIT**: 20-12345678-6? Verificá el dígito verificador."*
 
 ### Datos económicos para escritos y liquidaciones
 - *"¿A cuánto está el **dólar** hoy (oficial/blue/MEP)? Convertí una condena de **USD 10.000** al oficial."*
@@ -201,7 +198,7 @@ credenciales). Activalo en el chat y dale *Permitir* la primera vez.
   caché con vencimiento y backoff.
 - **Las tools corren fuera del event loop**, con un presupuesto de 25 segundos por consulta:
   una consulta lenta a una fuente no frena a los demás usuarios.
-- **Reimplementación clean-room**, bien testeada (158 tests pasan, 1 salteado: PostgreSQL sin
+- **Reimplementación clean-room**, bien testeada (155 tests pasan, 1 salteado: PostgreSQL sin
   base real) — ver [`DECISIONS.md`](DECISIONS.md), [`STATUS.md`](STATUS.md), [`NOTICE`](NOTICE).
 
 ## 💻 Instalarlo vos mismo (local, con Claude Desktop / Claude Code)
@@ -243,8 +240,7 @@ python -m arg_legal_mcp                                # corre por stdio
 - **El texto se pagina** en fragmentos de 8.000 caracteres: si hay más, la respuesta indica
   desde dónde seguir.
 - **Datos de terceros:** el dólar viene de un agregador privado (DolarAPI) y sirve como
-  referencia. `cuit_validar` no consulta a ARCA: no confirma que un CUIT exista. No hay
-  consulta de padrón.
+  referencia. No hay consulta de padrón de ARCA (datos de un CUIT).
 
 ## 🔒 Seguridad y privacidad
 

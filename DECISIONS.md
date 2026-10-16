@@ -140,11 +140,14 @@ si lo contradicen (p. ej. el punto 14 de arriba: las tools síncronas ya no corr
     parámetro `dependencia` a `organismo`, sobre los organismos reales del dataset.
 22. **Cálculos explícitos sobre lo que no cubren.** `calcular_actualizacion` (CER, UVA, ICL, IPC)
     no calcula intereses; `calcular_plazo` no contempla feriados provinciales, ferias judiciales
-    ni días inhábiles de cada tribunal; `cuit_validar` no consulta a ARCA. El límite va en la
+    ni días inhábiles de cada tribunal. El límite va en la
     respuesta y en la documentación: son orientativos.
 23. **Reconstrucción atómica de la base.** ZIP por https, extracción defensiva, base armada en
     un archivo temporal con lock y reemplazo atómico; el servidor toma la base nueva sin
     reiniciar. Si falla, queda la anterior.
+24. **Sin `cuit_validar` (16/10/2026).** Solo verificaba el dígito: sin padrón no confirma que
+    el CUIT exista ni a quién pertenece, y su presencia sugería una verificación que no hace.
+    Si vuelve, que sea con el padrón oficial de ARCA como dataset offline.
 
 ## Official data source (schema)
 - Dataset (CC BY 2.5 AR): `https://datos.gob.ar/dataset/justicia-base-infoleg-normativa-nacional`

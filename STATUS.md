@@ -1,8 +1,8 @@
 # STATUS — estado real al 15/10/2026
 
 Servidor en producción en `https://mcp.derechointeligente.com.ar/mcp` ("MCP LEAL" en claude.ai).
-**24 tools** de solo lectura, probadas de punta a punta por HTTP contra las fuentes reales
-(también desde el VPS). Tests: **158 pasan, 1 salteado** (PostgreSQL sin DSN); `ruff` limpio.
+**23 tools** de solo lectura, probadas de punta a punta por HTTP contra las fuentes reales
+(también desde el VPS). Tests: **155 pasan, 1 salteado** (PostgreSQL sin DSN); `ruff` limpio.
 
 ## Qué funciona
 
@@ -19,9 +19,8 @@ Servidor en producción en `https://mcp.derechointeligente.com.ar/mcp` ("MCP LEA
 - **Boletín Oficial de la Nación** (1ra y 3ra sección): `boletin_oficial_sumario`, `_buscar`
   y `_ver`; más el sumario de la Ciudad de Buenos Aires (`jurisdiccion="caba"`). La 2da sección
   (sociedades) no está: el `robots.txt` del sitio la excluye y se respeta.
-- **Cálculos.** `calcular_actualizacion` (CER, UVA, ICL vía BCRA; IPC vía INDEC),
-  `calcular_plazo` (días hábiles o corridos, con feriados nacionales y puentes) y `cuit_validar`
-  (local, no consulta a ARCA).
+- **Cálculos.** `calcular_actualizacion` (CER, UVA, ICL vía BCRA; IPC vía INDEC) y
+  `calcular_plazo` (días hábiles o corridos, con feriados nacionales y puentes).
 - **Datos económicos.** `dolar_cotizaciones`, `bcra_variables` (lee las ~1.610 variables y
   encuentra CER, UVA e ICL por sigla), `bcra_cotizaciones`, `indec_buscar_series` (prioriza
   series vigentes y nacionales), `indec_serie`, `feriados_nacionales`. Caché con TTL en todas

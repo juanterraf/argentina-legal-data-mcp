@@ -31,7 +31,7 @@ servidor de punta a punta. Cada uno indica las tools que debería usar el agente
 | 19 | Pedí una actualización con fechas inválidas (desde posterior a hasta, o futuras). | `calcular_actualizacion(...)` | Devuelve `error` claro, sin cálculo. |
 | 20 | Un plazo de **10 días hábiles** desde el **18/12/2026**: ¿cuándo vence? | `calcular_plazo("2026-12-18", 10)` | El cómputo arranca el día siguiente; descuenta fines de semana, el 25/12 y el 01/01, y lista los días salteados. Verificar con `feriados_nacionales(2026/2027)`. |
 | 21 | Plazo de 30 días **corridos** y límites. | `calcular_plazo("2026-06-09", 30, tipo="corridos")` | Fecha exacta + 30 días; el resultado aclara que no contempla ferias judiciales ni feriados provinciales. |
-| 22 | ¿Es válido el CUIT **20-12345678-6**? ¿Y 20-12345678-0? | `cuit_validar` | El dígito verificador decide; formato canónico `XX-XXXXXXXX-X`; tipo de persona por prefijo (20 = persona humana). No confirma que el CUIT exista. |
+| 22 | ¿Cuánto vale hoy la **UVA**? | `bcra_variables(buscar="UVA")` y luego `bcra_variables(id_variable=31)` | La primera coincidencia es la variable 31 (Unidad de valor adquisitivo); el valor viene con su fecha. |
 | 23 | ¿Cuál es el dólar **blue** hoy? | `dolar_cotizaciones()` | `casa="blue"` compra/venta de DolarAPI (referencia). |
 | 24 | Tipo de cambio oficial del BCRA a una fecha. | `bcra_cotizaciones(moneda="USD", fechadesde=..., fechahasta=...)` | Cotización publicada por el BCRA ese día. |
 | 25 | Valor actual de las **reservas** del BCRA. | `bcra_variables(buscar="reservas")` → `bcra_variables(id_variable=1)` | Catálogo de ~1.600 variables; id 1 = reservas internacionales (USD millones). |
@@ -45,7 +45,7 @@ servidor de punta a punta. Cada uno indica las tools que debería usar el agente
   - parsers contra fixtures HTML fieles de InfoLEG y del Boletín Oficial;
   - búsqueda en el dataset (FTS5, ranking, referencias directas) y filtros de `tributaria_buscar`;
   - degradación a dataset con `aviso` y no cacheo de respuestas vacías o irreconocibles;
-  - cálculo de plazos, actualización por índice y validación de CUIT;
+  - cálculo de plazos y actualización por índice;
   - `search` / `fetch`, autenticación (descubrimiento abierto / `tools/call` protegido) y
     endurecimiento del núcleo;
   - un test que prohíbe el cálculo erróneo de bloques de 50.000 para los anexos de InfoLEG.

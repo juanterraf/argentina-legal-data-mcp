@@ -34,12 +34,12 @@ src/arg_legal_mcp/
   server.py            # arma el FastMCP y registra tools/recursos/prompts
   config.py            # settings (env ARGMCP_*)
   infoleg/             # núcleo InfoLEG: client, parsers, dataset, session, cache, services…
-  sources/             # fuentes y cálculos: base, dolar, bcra, indec, feriados, boletin, cuit,
+  sources/             # fuentes y cálculos: base, dolar, bcra, indec, feriados, boletin,
                        # actualizacion, plazos, tributaria; register.py las registra
   auth/                # auth opcional (API-key) para el transporte HTTP
   http_app.py          # ASGI + transporte remoto
 tests/                 # un archivo por área (parsers, dataset, sources, boletin, plazos,
-                       # actualizacion, cuit, auth, search/fetch…)
+                       # actualizacion, auth, search/fetch…)
 docs/                  # casos de uso y documentación
 ```
 

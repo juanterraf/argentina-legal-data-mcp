@@ -1,6 +1,6 @@
 """Register the extra-source MCP tools.
 
-Dólar, feriados, BCRA, INDEC, CUIT, actualización de montos, cómputo de plazos, tributaria
+Dólar, feriados, BCRA, INDEC, actualización de montos, cómputo de plazos, tributaria
 y (vía ``boletin.register``) Boletín Oficial.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 from . import actualizacion as actualizacion_src
 from . import bcra as bcra_src
 from . import boletin as boletin_src
-from . import cuit as cuit_src
 from . import dolar as dolar_src
 from . import feriados as feriados_src
 from . import indec as indec_src
@@ -20,10 +19,8 @@ try:
     from mcp.types import ToolAnnotations
 
     _RO = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
-    _RO_LOCAL = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 except Exception:  # pragma: no cover
     _RO = None
-    _RO_LOCAL = None
 
 
 def _clamp(value, lo: int, hi: int, default: int) -> int:
@@ -36,7 +33,6 @@ def _clamp(value, lo: int, hi: int, default: int) -> int:
 
 def register_sources(mcp, settings, *, dataset=None) -> None:
     ro = {"annotations": _RO} if _RO else {}
-    ro_local = {"annotations": _RO_LOCAL} if _RO_LOCAL else {}
     ua = settings.user_agent
     timeout = settings.http_timeout
 
@@ -138,18 +134,6 @@ def register_sources(mcp, settings, *, dataset=None) -> None:
             q, limit=_clamp(limit, 1, indec_src.BUSCAR_LIMIT_MAX, 10),
             user_agent=ua, timeout=timeout,
         )
-
-    # ── CUIT (local) ─────────────────────────────────────────────────────────
-    @mcp.tool(name="cuit_validar", **ro_local)
-    def cuit_validar(cuit: str) -> dict:
-        """Valida un CUIT/CUIL/CDI: digito verificador, formato canonico y tipo de persona.
-
-        CUANDO USARLA: para chequear si un CUIT esta bien formado (con o sin guiones),
-        normalizarlo a XX-XXXXXXXX-X e inferir si es persona humana (20/23/24/27) o
-        juridica (30/33/34) por el prefijo. Calculo LOCAL, sin consultar a ARCA: NO confirma
-        que el CUIT exista, este activo ni a quien pertenece (no devuelve nombre ni estado).
-        """
-        return cuit_src.validar(cuit)
 
     # ── Actualización de montos ──────────────────────────────────────────────
     @mcp.tool(name="calcular_actualizacion", **ro)
