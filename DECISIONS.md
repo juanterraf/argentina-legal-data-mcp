@@ -32,7 +32,7 @@ behaviours, not the code:
 - **Two-level pagination**: InfoLEG returns 50/page; the MCP re-paginates to a
   small page size so the agent's context isn't flooded. Plus **text chunking**
   (fixed-size character windows with a "continue from N" header).
-- **Fuzzy dependency search** with `rapidfuzz` (`WRatio`, `score_cutoff=70`,
+- **Fuzzy organism search** (today `infoleg_buscar_organismos`) with `rapidfuzz` (`WRatio`, `score_cutoff=70`,
   accent-insensitive normalization).
 - **Persistent cache** with `diskcache` (fichas/texts/vínculos 24 h, search
   pages shorter).
@@ -106,6 +106,45 @@ The most mature as a product. We reimplemented its *patterns* in Python:
     sync tool functions safely.
 15. **Disclaimer on every legal output**: official sources, not legal advice; verify
     against the official portal before evidentiary use.
+
+## Decisiones del 15/10/2026 (revisión integral)
+
+Estas decisiones se toman sobre el código ya en producción y prevalecen sobre lo anterior
+si lo contradicen (p. ej. el punto 14 de arriba: las tools síncronas ya no corren en el event loop).
+
+16. **Fuera del MCP público las tools peligrosas.** `infoleg_actualizar_dataset` dejaba que
+    cualquiera disparara la descarga y reconstrucción de la base, y `requests_recientes`
+    mostraba las consultas de otros usuarios. La base se reconstruye solo por CLI
+    (`build-dataset`) o con el timer semanal; el servidor público es de solo lectura y no
+    expone datos de otros usuarios.
+17. **Boletín Oficial sin evadir el WAF y respetando `robots.txt`.** Se consulta el sitio con
+    un User-Agent honesto, sin técnicas para esquivar protecciones. El `robots.txt` veta la
+    2da sección (sociedades), así que no se cubre: es una decisión, no un faltante. Se sirven
+    1ra y 3ra sección.
+18. **Ranking con prioridad a normas base.** Además de bm25 con peso en el título, las normas
+    muy modificadas y las referencias directas ("Ley 20628", "DNU 70/2023") van primero:
+    para "impuesto a las ganancias" importa la Ley 20.628, no la última resolución que la
+    menciona. Reemplaza el simple *recency boost* como criterio principal.
+19. **Degradación con aviso, no cachear vacíos.** Si InfoLEG cambia de formato o devuelve algo
+    vacío o irreconocible, se degrada al dataset con `aviso` y esa respuesta no se cachea:
+    cachear un vacío lo convertiría en un dato falso durante todo el TTL. El respaldo de
+    vínculos ya no infiere normas a partir de contadores: avisa que vacío no significa "ninguna".
+20. **Tools fuera del event loop.** Todas las tools corren en un hilo (`instrument_tools`) con
+    presupuesto de 25 s: una consulta lenta a una fuente externa no frena a los demás
+    usuarios. Cada llamada se registra (tool, ms, ok/error) **sin argumentos**, porque pueden
+    contener datos personales.
+21. **Se eliminan tools que no podían cumplir lo que prometían.** `afip_padron` (el endpoint
+    no oficial da 404), `infoleg_estado_dataset` (absorbida por `data_health`),
+    `infoleg_resolver_id` e `infoleg_get_dependencia_by_id` (`infoleg_buscar_normas` ya resuelve
+    referencias). `infoleg_buscar_dependencias` pasa a `infoleg_buscar_organismos` y el
+    parámetro `dependencia` a `organismo`, sobre los organismos reales del dataset.
+22. **Cálculos explícitos sobre lo que no cubren.** `calcular_actualizacion` (CER, UVA, ICL, IPC)
+    no calcula intereses; `calcular_plazo` no contempla feriados provinciales, ferias judiciales
+    ni días inhábiles de cada tribunal; `cuit_validar` no consulta a ARCA. El límite va en la
+    respuesta y en la documentación: son orientativos.
+23. **Reconstrucción atómica de la base.** ZIP por https, extracción defensiva, base armada en
+    un archivo temporal con lock y reemplazo atómico; el servidor toma la base nueva sin
+    reiniciar. Si falla, queda la anterior.
 
 ## Official data source (schema)
 - Dataset (CC BY 2.5 AR): `https://datos.gob.ar/dataset/justicia-base-infoleg-normativa-nacional`

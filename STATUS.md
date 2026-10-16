@@ -1,72 +1,67 @@
-# STATUS — what's done and what's pending
+# STATUS — estado real al 15/10/2026
 
-## Definition of done (from the brief §6)
+Servidor en producción en `https://mcp.derechointeligente.com.ar/mcp` ("MCP LEAL" en claude.ai).
+**24 tools** de solo lectura, probadas de punta a punta por HTTP contra las fuentes reales
+(también desde el VPS). Tests: **158 pasan, 1 salteado** (PostgreSQL sin DSN); `ruff` limpio.
 
-- [x] `infoleg_buscar_normas` works in **dataset** mode and **live** mode (native operators).
-- [x] Reads the **text** (original + actualizado), paginated, from the **real URL**
-      (test forbids the 50,000-block calculation).
-- [x] Modification traceability in **both** directions (live `verVinculos`, dataset fallback).
-- [x] Fuzzy dependency search + tipos resource.
-- [x] Graceful **dataset ↔ live degradation** with an `aviso` in the response.
-- [x] **Auth** on HTTP (discovery open / execution protected); disabled on stdio.
-- [x] **TLS verified** on every request (httpx default; never disabled).
-- [x] Persistent **cache** (diskcache) + **health-check** (`data_health`, `data_freshness`).
-- [x] **Dockerfile** builds; server runs on stdio and http; systemd + Caddy documented.
-- [x] `pytest` green (37 tests, incl. mocked integration) and `ruff` clean.
-- [x] README complete (local + remote + Claude connector + env vars).
-- [x] No hardcoded secrets; `.env.example` + `secrets/api-keys.json.example` provided.
+## Qué funciona
 
-## Phase coverage
+- **InfoLEG (dataset offline + en vivo).** `infoleg_buscar_normas` (dataset por defecto,
+  `en_vivo=true` para el buscador real), `infoleg_ver_norma`, texto actualizado y original
+  paginados en fragmentos de ~8.000 caracteres, vínculos en ambas direcciones,
+  `infoleg_comparar_original_actualizado`, `infoleg_buscar_organismos`, `tributaria_buscar`
+  (filtra en SQL con paginación exacta) y el recurso `infoleg://tipos-norma`.
+- **Ranking por relevancia.** bm25 con peso en el título y prioridad a normas base (muy
+  modificadas) y a referencias directas: "impuesto a las ganancias" trae primero la Ley 20.628.
+- **Degradación honesta.** Si InfoLEG cae o cambia de formato, ficha, vínculos y búsqueda vacíos
+  o irreconocibles degradan al dataset con `aviso` y no se cachean. Una lista de vínculos
+  vacía con aviso no significa "ninguna".
+- **Boletín Oficial de la Nación** (1ra y 3ra sección): `boletin_oficial_sumario`, `_buscar`
+  y `_ver`; más el sumario de la Ciudad de Buenos Aires (`jurisdiccion="caba"`). La 2da sección
+  (sociedades) no está: el `robots.txt` del sitio la excluye y se respeta.
+- **Cálculos.** `calcular_actualizacion` (CER, UVA, ICL vía BCRA; IPC vía INDEC),
+  `calcular_plazo` (días hábiles o corridos, con feriados nacionales y puentes) y `cuit_validar`
+  (local, no consulta a ARCA).
+- **Datos económicos.** `dolar_cotizaciones`, `bcra_variables` (lee las ~1.610 variables y
+  encuentra CER, UVA e ICL por sigla), `bcra_cotizaciones`, `indec_buscar_series` (prioriza
+  series vigentes y nacionales), `indec_serie`, `feriados_nacionales`. Caché con TTL en todas
+  las fuentes.
+- **Diagnóstico y ChatGPT.** `data_health` (incluye el estado del dataset), `search` y `fetch`
+  (texto de la norma limpio de HTML, en fragmentos de 8.000).
+- **Seguridad y operación.**
+  - Sin tools de mantenimiento ni de consulta de logs en el MCP público.
+  - Registro de cada llamada (tool, ms, ok/error) sin argumentos, aun con la auth apagada.
+  - Tope de body de 1 MiB; claves comparadas en tiempo constante; con auth activa, solo el
+    descubrimiento queda abierto.
+  - Tools fuera del event loop, con presupuesto de 25 s por tool.
+  - systemd endurecido (`ProtectSystem=strict`, escritura solo en `data` y `.cache`, filtro de
+    syscalls).
+- **Base de datos.** Se reconstruye con `python -m arg_legal_mcp build-dataset` o con el timer
+  semanal de systemd (domingos 04:00): ZIP de ~49 MB por https, extracción defensiva, archivo
+  temporal con lock y reemplazo atómico. El servidor toma la base nueva sin reiniciar.
+- **Deploy.** `bash scripts/deploy-vps.sh`: sube `HEAD`, instala servicio y timer, ajusta
+  permisos y corta si el servicio no queda activo. Provisión inicial detallada en el encabezado
+  del script.
+- **Auth opcional** (`ARGMCP_AUTH_ENABLED`, API keys con recarga en caliente); en producción
+  el servidor es público y *authless*.
 
-- **Phase 0** — ✅ skeleton, pyproject, ruff, pytest, FastMCP server.
-- **Phase 1** — ✅ InfoLEG core: dataset (SQLite+FTS5, recency boost), live client
-  (stateful session, POST `buscarNormas.do`, `verNorma`, `verVinculos`, `consultar_anexo`,
-  `mostrarBusquedaNormas`), defensive parsers, catalogs + rapidfuzz, diskcache,
-  2-level pagination + chunking, 12 InfoLEG tools, resource, prompts, tests.
-- **Phase 2** — ✅ dual transport (stdio + streamable-http/sse), auth (hot-reload API
-  keys + ASGI middleware), health/freshness + request log, Docker/compose/systemd/Caddy,
-  README.
-- **Phase 3** — ✅ extensible **sources** framework + 8 extra-source tools, all with the
-  API contracts **live-verified** (a research workflow fetched real samples) and covered
-  by mocked tests:
-  - **dólar** (DolarAPI), **BCRA** variables + cotizaciones (v4.0 — v2/v3 are 410 Gone),
-    **INDEC**/datos.gob.ar series + search, **feriados** (ArgentinaDatos),
-    **tributaria** (filtered InfoLEG dataset), **Boletín Oficial** (CABA JSON; national
-    has no stable JSON API — honest pointers), **AFIP** padrón (best-effort + local CUIT
-    validation; no free official API exists).
-  - Optional **PostgreSQL** backend (`ARGMCP_BACKEND=postgres`): tsvector +
-    `websearch_to_tsquery` + pg_trgm + recency boost, same interface as SQLite, with an
-    importer and a guarded integration test.
-- **Phase 4** — ✅ diff tool, MCP prompts, `EVALS.md`, bounded retry/backoff, structured
-  errors, and a multi-agent **adversarial review** of the new sources/Postgres code that
-  surfaced 9 confirmed issues — all fixed and covered by tests (notably: BCRA catalog
-  pagination so all 1220 variables are returned rather than silently truncated at 1000;
-  no-retry on permanent 4xx; Postgres↔SQLite search-operator parity; tighter error
-  handling). Pending: a broader live eval run for InfoLEG specifically (blocked by InfoLEG
-  availability; the other sources are verified live).
+## Pendiente
 
-## Known limitations / TODO
+- **Tool de intereses judiciales.** La tasa activa del Banco Nación no está en la API del BCRA.
+  La tasa pasiva de uso de justicia (Com. "P" 14.290) sí está (variable id 43), así que se
+  podría cubrir esa; la tasa activa BNA requiere otra fuente.
+- **Padrón de ARCA.** No hay API oficial gratuita: solo existe el archivo descargable oficial.
+  Sería un dataset offline (descarga + reconstrucción, como el de InfoLEG), no una consulta en vivo.
+- **PostgreSQL sin probar contra una base real.** El backend (`ARGMCP_BACKEND=postgres` +
+  `ARGMCP_PG_DSN`) está implementado y su test de integración se saltea sin DSN; SQLite es el
+  camino por defecto y el que corre en producción.
+- Los datasets complementarios de vínculos de datos.jus.gob.ar no están cargados: los vínculos
+  usan InfoLEG en vivo, con el contador del dataset como respaldo (solo para avisar).
+- La 2da sección del Boletín Oficial sigue sin cubrirse (decisión de respetar el `robots.txt`).
 
-- **Live InfoLEG was returning 503/403** to automated clients during development. The
-  default **dataset** mode and graceful degradation are designed for exactly this; live
-  code paths are covered by mocked tests. Run `update-configs` / `build-dataset` when the
-  hosts are reachable to populate `data/dependencias.json` and `data/infoleg.sqlite`.
-- `data/dependencias.json` ships **empty** (138 KB live-generated catalog). `tipos_norma.json`
-  ships a small **bootstrap**; `update-configs` regenerates both fully.
-- `BusquedaNormaRequest.anio_sancion` uses the field name observed in the reference's
-  working client; verify against the live form when reachable.
-- Complementary vínculos datasets (`0c4fdafe…`, `dea3c247…`) are not yet loaded; vínculos
-  use live `verVinculos` with the main dataset's `modifica_a`/`modificada_por` as fallback.
-- PostgreSQL backend is implemented (`ARGMCP_BACKEND=postgres` + `ARGMCP_PG_DSN`); its
-  integration test is skipped unless a live `ARGMCP_PG_DSN` is provided (SQLite remains
-  the zero-config default).
-- AFIP has **no** free official API; `afip_padron` is best-effort against an unofficial,
-  frequently-down endpoint. CUIT validation is local and reliable. National Boletín
-  Oficial has no stable public JSON API (WAF); the CABA bulletin does.
+## Cómo agregar una fuente nueva
 
-## How to extend with a new source (Phase 3 pattern)
-
-1. Add `src/arg_legal_mcp/sources/<name>.py` with a function returning a dict
-   (use `sources.base.get_json`).
-2. Register a tool in `sources/register.py`.
-3. Add a mocked test in `tests/test_sources.py` (respx).
+1. Crear `src/arg_legal_mcp/sources/<nombre>.py` con una función que devuelva un `dict`
+   (usar `sources.base`: TLS verificado, retry/backoff, caché).
+2. Registrar la tool en `sources/register.py`, con docstring "CUANDO USARLA" y los límites.
+3. Agregar un test mockeado (respx) en `tests/`.

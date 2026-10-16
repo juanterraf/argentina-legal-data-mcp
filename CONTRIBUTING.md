@@ -25,7 +25,8 @@ pytest -q                   # tests (no requieren red: el HTTP está mockeado co
 
 Requisitos: **Python 3.12+**. Para probar el servidor localmente:
 `python -m arg_legal_mcp` (stdio). Para construir el dataset offline:
-`python -m arg_legal_mcp build-dataset`.
+`python -m arg_legal_mcp build-dataset` (la actualización de la base **no** se expone como tool
+MCP: solo CLI y timer de systemd).
 
 ## Estructura del proyecto
 ```
@@ -33,18 +34,23 @@ src/arg_legal_mcp/
   server.py            # arma el FastMCP y registra tools/recursos/prompts
   config.py            # settings (env ARGMCP_*)
   infoleg/             # núcleo InfoLEG: client, parsers, dataset, session, cache, services…
-  sources/             # fuentes extra: base, dolar, bcra, indec, afip, feriados, boletin…
+  sources/             # fuentes y cálculos: base, dolar, bcra, indec, feriados, boletin, cuit,
+                       # actualizacion, plazos, tributaria; register.py las registra
   auth/                # auth opcional (API-key) para el transporte HTTP
   http_app.py          # ASGI + transporte remoto
-tests/                 # un archivo por área (parsers, dataset, sources, auth, search/fetch…)
+tests/                 # un archivo por área (parsers, dataset, sources, boletin, plazos,
+                       # actualizacion, cuit, auth, search/fetch…)
 docs/                  # casos de uso y documentación
 ```
 
 ## Agregar una nueva fuente de datos (patrón)
 1. Creá `src/arg_legal_mcp/sources/<nombre>.py` con una función que devuelva un `dict`,
    usando `sources.base.get_json(...)` (TLS verificado + retry/backoff incluidos).
-2. Registrá la tool en `sources/register.py` (con docstring claro estilo "CUÁNDO USARLA").
-3. Agregá un test en `tests/test_sources.py` mockeando el HTTP con `respx`.
+2. Registrá la tool en `sources/register.py` (o en el `register` del módulo, como `boletin.py`),
+   con docstring claro estilo "CUÁNDO USARLA" que diga también sus **límites**. Las tools
+   síncronas se ejecutan fuera del event loop (`instrument_tools`): no hace falta `async`.
+3. Agregá un test (por ejemplo en `tests/test_sources.py`, o un archivo propio si es una fuente
+   grande) mockeando el HTTP con `respx`.
 4. Si la fuente expone un esquema, normalizá la salida a un `dict`/`TypedDict` y devolvé
    un `error` estructurado ante fallos (nunca dejes caer una tool).
 
@@ -52,11 +58,15 @@ docs/                  # casos de uso y documentación
 - **TLS siempre verificado.** Nunca desactivar la verificación de certificados.
 - **No "calcular" lo que se puede leer.** Para los anexos de InfoLEG se lee la URL real
   (no se computa la carpeta); hay un test que prohíbe el cálculo erróneo de bloques de 50.000.
-- **Las tools nunca crashean**: devuelven un `dict` con `error`/`aviso`.
+- **Las tools nunca crashean**: devuelven un `dict` con `error`/`aviso`. Un resultado vacío
+  o irreconocible de una fuente **no se sirve como dato ni se cachea**: se degrada y se avisa.
+- **Solo lectura y sin datos personales en logs.** No se agregan tools que modifiquen estado
+  del servidor ni que expongan consultas de otros usuarios; los logs no incluyen argumentos.
 - **Disclaimer y atribución.** Las salidas legales llevan el aviso de "no es asesoramiento";
   respetá las licencias y atribuciones de las fuentes (InfoLEG/dataset = CC BY 2.5 AR).
 - **Buen ciudadano de la infraestructura pública**: caché, backoff y User-Agent honesto;
-  sin scraping abusivo.
+  sin scraping abusivo, sin evadir protecciones (WAF) y respetando el `robots.txt` de cada
+  sitio (por eso el Boletín Oficial no cubre la 2da sección).
 
 ## Pull requests
 1. Hacé un fork y una rama (`feat/...` o `fix/...`).
