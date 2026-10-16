@@ -21,9 +21,15 @@ TTL_BCRA_CATALOGO = 6 * 3600  # 6 h
 TTL_BCRA_SERIE = 900  # 15 min
 TTL_FERIADOS = 24 * 3600  # 24 h
 TTL_INDEC = 1800  # 30 min
+# Series mensuales: si la fuente no responde, se acepta un dato vencido de hasta 7 días.
+STALE_INDEC = 7 * 24 * 3600
+
+# Clave que get_json agrega a un dict servido desde caché vencida (edad en segundos).
+STALE_KEY = "_cache_vencido_seg"
 
 _CACHE_MAX = 256
-_cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+_STALE_KEEP = 7 * 24 * 3600  # una entrada vencida se descarta pasado este tiempo
+_cache: OrderedDict[str, tuple[float, float, Any]] = OrderedDict()  # (vence, guardado, valor)
 _cache_lock = threading.Lock()
 
 
@@ -40,22 +46,27 @@ def _cache_key(url: str, params: dict | None) -> str:
     return url + "?" + json.dumps(params or {}, sort_keys=True, default=str)
 
 
-def _cache_get(key: str) -> tuple[bool, Any]:
+def _cache_get(key: str) -> tuple[str, Any, float]:
+    """('vigente' | 'vencido' | 'ausente', valor, segundos desde que se guardó)."""
     now = time.monotonic()
     with _cache_lock:
         item = _cache.get(key)
         if item is None:
-            return False, None
-        if item[0] <= now:
+            return "ausente", None, 0.0
+        vence, guardado, valor = item
+        if vence > now:
+            _cache.move_to_end(key)
+            return "vigente", valor, now - guardado
+        if now - vence > _STALE_KEEP:
             del _cache[key]
-            return False, None
-        _cache.move_to_end(key)
-        return True, item[1]
+            return "ausente", None, 0.0
+        return "vencido", valor, now - guardado
 
 
 def _cache_put(key: str, value: Any, ttl: float) -> None:
+    now = time.monotonic()
     with _cache_lock:
-        _cache[key] = (time.monotonic() + ttl, value)
+        _cache[key] = (now + ttl, now, value)
         _cache.move_to_end(key)
         while len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
@@ -77,13 +88,51 @@ def get_json(
     retries: int = 2,
     backoff: float = 0.5,
     ttl: float | None = None,
+    stale_max: float = 0,
 ) -> Any:
-    """GET ``url`` and return decoded JSON. ``ttl`` (seconds) enables the in-memory cache."""
+    """GET ``url`` and return decoded JSON. ``ttl`` (seconds) enables the in-memory cache.
+
+    With ``stale_max`` > 0, if the source fails and there is an expired cached response
+    saved less than ``stale_max`` seconds ago, that response is returned instead of the
+    error; a dict response carries ``STALE_KEY`` with its age so the tool can say so.
+    """
     key = _cache_key(url, params) if ttl else ""
-    if ttl:
-        hit, value = _cache_get(key)
-        if hit:
-            return value
+    estado, cacheado, edad = _cache_get(key) if ttl else ("ausente", None, 0.0)
+    if estado == "vigente":
+        return cacheado
+    try:
+        return _fetch_json(url, key, user_agent=user_agent, timeout=timeout, params=params,
+                           retries=retries, backoff=backoff, ttl=ttl)
+    except SourceError:
+        if estado == "vencido" and stale_max and edad <= stale_max:
+            if isinstance(cacheado, dict):
+                return {**cacheado, STALE_KEY: int(edad)}
+            return cacheado
+        raise
+
+
+def aviso_cache_vencido(data: Any) -> str | None:
+    """Aviso para el usuario si ``data`` vino de caché vencida (ver ``get_json``)."""
+    edad = data.get(STALE_KEY) if isinstance(data, dict) else None
+    if edad is None:
+        return None
+    horas = edad / 3600
+    hace = f"{horas:.0f} h" if horas >= 1 else f"{edad // 60} min"
+    return (f"La fuente no respondio; se devuelve el ultimo dato guardado (de hace {hace}). "
+            "Puede no incluir publicaciones recientes.")
+
+
+def _fetch_json(
+    url: str,
+    key: str,
+    *,
+    user_agent: str,
+    timeout: float,
+    params: dict | None,
+    retries: int,
+    backoff: float,
+    ttl: float | None,
+) -> Any:
     last: Exception | None = None
     headers = {"User-Agent": user_agent, "Accept": "application/json"}
     tmo = httpx.Timeout(timeout, connect=min(timeout, 8.0))

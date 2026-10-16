@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from . import bcra
-from .base import TTL_INDEC, SourceError, error_result, get_json, parse_iso_date
+from .base import STALE_INDEC, TTL_INDEC, SourceError, error_result, get_json, parse_iso_date
 
 INDICES = {
     "CER": {
@@ -82,6 +82,7 @@ def _valor_mensual(serie_id: str, dia: date, *, user_agent: str, timeout: float)
     primero = dia.replace(day=1)
     data = get_json(
         _SERIES_URL, user_agent=user_agent, timeout=timeout, ttl=TTL_INDEC,
+        stale_max=STALE_INDEC,  # el IPC de un mes ya publicado no cambia
         params={"ids": serie_id, "format": "json", "sort": "desc", "limit": 1,
                 "end_date": primero.isoformat()},
     )

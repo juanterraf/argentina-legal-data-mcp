@@ -19,7 +19,15 @@ import re
 import unicodedata
 from datetime import date, timedelta
 
-from .base import TTL_INDEC, SourceError, error_result, get_json, parse_iso_date
+from .base import (
+    STALE_INDEC,
+    TTL_INDEC,
+    SourceError,
+    aviso_cache_vencido,
+    error_result,
+    get_json,
+    parse_iso_date,
+)
 
 BASE = "https://apis.datos.gob.ar/series/api"
 _FUENTE = "datos.gob.ar — Series de Tiempo (INDEC y otros)"
@@ -86,7 +94,7 @@ def serie(
         params["end_date"] = end_date
     try:
         data = get_json(f"{BASE}/series", user_agent=user_agent, timeout=timeout,
-                        params=params, ttl=TTL_INDEC)
+                        params=params, ttl=TTL_INDEC, stale_max=STALE_INDEC)
     except SourceError as exc:
         return error_result(f"INDEC/datos.gob.ar no disponible: {exc}", "datos.gob.ar")
 
@@ -97,13 +105,17 @@ def serie(
         if isinstance(r, list) and len(r) >= 2
     ]
     meta = data.get("meta") if isinstance(data, dict) else None
-    return {
+    out = {
         "serie_id": serie_id,
         "observaciones": observaciones,
         "total": len(observaciones),
         "meta": meta,
         "fuente": _FUENTE,
     }
+    aviso = aviso_cache_vencido(data)
+    if aviso:
+        out["aviso"] = aviso
+    return out
 
 
 def _estado(field: dict, dataset: dict, hoy: date) -> tuple[bool, str | None]:
@@ -167,6 +179,7 @@ def buscar(q: str, *, limit: int = 10, user_agent: str, timeout: float = 25.0) -
             data = get_json(
                 f"{BASE}/search", user_agent=user_agent, timeout=timeout,
                 params={"q": q, "limit": max(fetch, limit)}, ttl=TTL_INDEC, retries=1,
+                stale_max=STALE_INDEC,
             )
             break
         except SourceError as exc:
@@ -195,7 +208,7 @@ def buscar(q: str, *, limit: int = 10, user_agent: str, timeout: float = 25.0) -
             "ultimo_dato": fin,
             "cobertura": _cobertura(field, dataset, query_norm),
         })
-    return {
+    out = {
         "series": series,
         "total": len(series),
         "total_api": data.get("count") if isinstance(data, dict) else None,
@@ -203,3 +216,7 @@ def buscar(q: str, *, limit: int = 10, user_agent: str, timeout: float = 25.0) -
         "nacional y dato mas reciente; las discontinuadas quedan al final (vigente=false)",
         "fuente": "datos.gob.ar — Series de Tiempo (búsqueda)",
     }
+    aviso = aviso_cache_vencido(data)
+    if aviso:
+        out["aviso"] = aviso
+    return out
