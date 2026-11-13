@@ -220,8 +220,8 @@ python -m arg_legal_mcp                                # corre por stdio
 - **Reconstrucción atómica:** se baja el ZIP oficial por https (~49 MB), se arma la base en un
   archivo temporal con lock y recién al final reemplaza a la vigente. El servidor toma la base
   nueva sin reiniciar. La actualización **no se expone por MCP**: solo por CLI o timer.
-- **Deploy al VPS:** `bash scripts/deploy-vps.sh` (sube lo versionado en `HEAD`, instala servicio
-  y timer, ajusta permisos y corta si el servicio no queda activo). No toca nginx ni el dataset.
+- **Deploy al VPS:** con un script local que no se publica (sube lo versionado en `HEAD`, instala
+  servicio y timer, ajusta permisos y corta si el servicio no queda activo). No toca nginx ni el dataset.
 - Hay `Dockerfile`, `docker-compose.yml`, `systemd/` y `Caddyfile` para otros esquemas;
   más detalle en [`STATUS.md`](STATUS.md).
 

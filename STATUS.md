@@ -38,9 +38,9 @@ Servidor en producción en `https://mcp.derechointeligente.com.ar/mcp` ("MCP LEA
 - **Base de datos.** Se reconstruye con `python -m arg_legal_mcp build-dataset` o con el timer
   semanal de systemd (domingos 04:00): ZIP de ~49 MB por https, extracción defensiva, archivo
   temporal con lock y reemplazo atómico. El servidor toma la base nueva sin reiniciar.
-- **Deploy.** `bash scripts/deploy-vps.sh`: sube `HEAD`, instala servicio y timer, ajusta
-  permisos y corta si el servicio no queda activo. Provisión inicial detallada en el encabezado
-  del script.
+- **Deploy.** Con un script local, fuera del repositorio público (`scripts/deploy-vps.sh`, en
+  `.gitignore`): sube `HEAD`, instala servicio y timer, ajusta permisos y corta si el servicio no
+  queda activo.
 - **Auth opcional** (`ARGMCP_AUTH_ENABLED`, API keys con recarga en caliente); en producción
   el servidor es público y *authless*.
 

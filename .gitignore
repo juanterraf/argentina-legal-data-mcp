@@ -25,6 +25,8 @@ data/*.csv
 secrets/*
 !secrets/api-keys.json.example
 *-keys.json
+# Deploy al VPS: datos de la infraestructura, queda solo en local
+scripts/deploy-vps.sh
 
 # Tooling
 .pytest_cache/
